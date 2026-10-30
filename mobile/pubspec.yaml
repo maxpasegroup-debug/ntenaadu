@@ -1,0 +1,27 @@
+name: nte_naadu_mobile
+description: NTE Naadu family learning and community mobile app.
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  dio: ^5.11.0
+  flutter_secure_storage: ^11.2.0
+  intl: ^0.20.3
+  just_audio: ^0.10.6
+  shared_preferences: ^2.5.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/l10n/

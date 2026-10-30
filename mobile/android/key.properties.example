@@ -1,0 +1,6 @@
+# Copy to android/key.properties on a controlled release workstation.
+# Never commit key.properties or any keystore file.
+storeFile=keys/nte-upload-key.jks
+storePassword=REPLACE_WITH_SECRET
+keyAlias=nte-upload
+keyPassword=REPLACE_WITH_SECRET
