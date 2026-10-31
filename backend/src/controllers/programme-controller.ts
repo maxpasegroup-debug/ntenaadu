@@ -73,7 +73,7 @@ export async function getProgramme(req: Request, res: Response): Promise<void> {
   if (student) {
     const enrollment = await ProgrammeEnrollment.findOne({ programmeId: programme.programmeId, guardianId: current.parentId, studentId: student._id, status: { $in: ['active', 'completed'] } });
     enrollmentStatus = enrollment?.status ?? null;
-    if (enrollment) progress = await ProgrammeProgress.find({ programmeId: programme.programmeId, guardianId: current.parentId, studentId: student._id }).select('activityId status completionSource -_id').lean();
+    if (enrollment) progress = await ProgrammeProgress.find({ programmeId: programme.programmeId, guardianId: current.parentId, studentId: student._id }).select('activityId status completionSource -_id').lean() as unknown as Array<{ activityId: string; status: string; completionSource: string }>;
   }
   const progressByActivity = new Map(progress.map((p) => [p.activityId, p.status]));
   res.json({ programme: { ...programmeDto(programme, Boolean(entitlement)), modules: modules.map((m) => ({ id: m.moduleId, title: m.title, description: m.description })), activities: activities.map((a) => ({ id: a.activityId, moduleId: a.moduleId ?? null, title: a.title, description: a.description, contentLanguage: a.contentLanguage, learningContentId: a.learningContentId ?? null, status: progressByActivity.get(a.activityId) ?? 'not_started' })), enrollmentStatus, progress } });

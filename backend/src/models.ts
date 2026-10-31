@@ -1,8 +1,11 @@
 import mongoose, { Schema, type Model } from 'mongoose';
 
 const objectId = Schema.Types.ObjectId;
+// The API intentionally uses Model<any> at its persistence boundary. Keep Mongoose
+// from re-inferring deep document types from every large runtime schema definition.
+const createSchema = (definition: any, options: any): Schema<any> => new Schema<any>(definition, options);
 
-const parentSchema = new Schema({
+const parentSchema = createSchema({
   name: { type: String, required: true, trim: true, minlength: 1, maxlength: 120 },
   contact: { type: String, required: true, trim: true, lowercase: true, maxlength: 254 },
   contactType: { type: String, enum: ['email', 'phone'], required: true },
@@ -18,12 +21,12 @@ const parentSchema = new Schema({
 }, { timestamps: true, collection: 'nte_parent_accounts' });
 parentSchema.index({ contact: 1 }, { unique: true });
 
-const familySchema = new Schema({
+const familySchema = createSchema({
   guardianId: { type: objectId, ref: 'NteParentAccount', required: true, unique: true, index: true },
   status: { type: String, enum: ['active', 'closed'], default: 'active', required: true },
 }, { timestamps: true, collection: 'nte_families' });
 
-const studentSchema = new Schema({
+const studentSchema = createSchema({
   familyId: { type: objectId, ref: 'NteFamily', required: true, index: true },
   preferredName: { type: String, required: true, trim: true, minlength: 1, maxlength: 80 },
   ageGroup: { type: String, enum: ['child', 'youth'], required: true },
@@ -31,7 +34,7 @@ const studentSchema = new Schema({
   status: { type: String, enum: ['pending_consent', 'active', 'archived'], default: 'pending_consent', index: true },
 }, { timestamps: true, collection: 'nte_student_profiles' });
 
-const relationshipSchema = new Schema({
+const relationshipSchema = createSchema({
   familyId: { type: objectId, ref: 'NteFamily', required: true, index: true },
   guardianId: { type: objectId, ref: 'NteParentAccount', required: true, index: true },
   studentId: { type: objectId, ref: 'NteStudentProfile', required: true, index: true },
@@ -46,7 +49,7 @@ const relationshipSchema = new Schema({
 }, { timestamps: true, collection: 'nte_guardian_relationships' });
 relationshipSchema.index({ guardianId: 1, studentId: 1 }, { unique: true });
 
-const sessionSchema = new Schema({
+const sessionSchema = createSchema({
   parentId: { type: objectId, ref: 'NteParentAccount', required: true, index: true },
   refreshTokenHash: { type: String, required: true, unique: true, select: false },
   expiresAt: { type: Date, required: true, index: { expires: 0 } },
@@ -55,7 +58,7 @@ const sessionSchema = new Schema({
 }, { timestamps: true, collection: 'nte_auth_sessions' });
 sessionSchema.index({ parentId: 1, revokedAt: 1 });
 
-const challengeSchema = new Schema({
+const challengeSchema = createSchema({
   parentId: { type: objectId, ref: 'NteParentAccount', required: true, index: true },
   contact: { type: String, required: true, select: false },
   purpose: { type: String, enum: ['registration', 'recovery'], required: true },
@@ -65,7 +68,7 @@ const challengeSchema = new Schema({
   consumedAt: Date,
 }, { timestamps: true, collection: 'nte_identity_challenges' });
 
-const policySchema = new Schema({
+const policySchema = createSchema({
   policyId: { type: String, required: true, trim: true },
   version: { type: String, required: true, trim: true },
   languageCode: { type: String, enum: ['en', 'hi', 'ml', 'ta'], required: true },
@@ -78,7 +81,7 @@ const policySchema = new Schema({
 policySchema.index({ policyId: 1, version: 1, languageCode: 1 }, { unique: true });
 policySchema.index({ reviewStatus: 1, languageCode: 1, effectiveAt: 1 });
 
-const consentEventSchema = new Schema({
+const consentEventSchema = createSchema({
   relationshipId: { type: objectId, ref: 'NteGuardianRelationship', required: true, index: true, immutable: true },
   familyId: { type: objectId, ref: 'NteFamily', required: true, index: true, immutable: true },
   actorId: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true },
@@ -91,7 +94,7 @@ const consentEventSchema = new Schema({
 }, { timestamps: false, collection: 'nte_consent_events' });
 consentEventSchema.index({ relationshipId: 1, occurredAt: -1 });
 
-const auditSchema = new Schema({
+const auditSchema = createSchema({
   actorId: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true },
   familyId: { type: objectId, ref: 'NteFamily', immutable: true },
   subjectId: { type: objectId, immutable: true },
@@ -103,7 +106,7 @@ const auditSchema = new Schema({
 auditSchema.index({ familyId: 1, occurredAt: -1 });
 auditSchema.index({ actorId: 1, occurredAt: -1 });
 
-const safeguardingReportSchema = new Schema({
+const safeguardingReportSchema = createSchema({
   reportId: { type: String, required: true, unique: true, immutable: true, index: true },
   reporterId: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true, select: false, index: true },
   reporterFamilyId: { type: objectId, ref: 'NteFamily', select: false, index: true },
@@ -121,7 +124,7 @@ const safeguardingReportSchema = new Schema({
 }, { timestamps: true, collection: 'nte_safeguarding_reports' });
 safeguardingReportSchema.index({ status: 1, urgency: 1, createdAt: 1 });
 
-const safeguardingNoteSchema = new Schema({
+const safeguardingNoteSchema = createSchema({
   reportId: { type: String, required: true, immutable: true, index: true },
   authorId: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true },
   body: { type: String, required: true, trim: true, minlength: 1, maxlength: 3000 },
@@ -129,7 +132,7 @@ const safeguardingNoteSchema = new Schema({
 }, { timestamps: false, collection: 'nte_safeguarding_notes' });
 safeguardingNoteSchema.index({ reportId: 1, createdAt: 1 });
 
-const safeguardingAuditSchema = new Schema({
+const safeguardingAuditSchema = createSchema({
   reportId: { type: String, required: true, immutable: true, index: true },
   actorId: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true },
   action: { type: String, required: true, maxlength: 80, immutable: true },
@@ -140,7 +143,7 @@ const safeguardingAuditSchema = new Schema({
 safeguardingAuditSchema.index({ actorId: 1, occurredAt: -1 });
 safeguardingAuditSchema.index({ reportId: 1, occurredAt: -1 });
 
-const learningTopicSchema = new Schema({
+const learningTopicSchema = createSchema({
   topicId: { type: String, required: true, trim: true, lowercase: true, unique: true, maxlength: 80 },
   labels: {
     en: { type: String, trim: true, maxlength: 120 },
@@ -151,7 +154,7 @@ const learningTopicSchema = new Schema({
   publicationStatus: { type: String, enum: ['draft', 'in_review', 'published', 'archived'], default: 'draft', required: true, index: true },
 }, { timestamps: true, collection: 'nte_learning_topics' });
 
-const learningContentSchema = new Schema({
+const learningContentSchema = createSchema({
   contentId: { type: String, required: true, trim: true, unique: true, maxlength: 120 },
   contentGroupId: { type: String, required: true, trim: true, index: true, maxlength: 120 },
   title: { type: String, required: true, trim: true, maxlength: 240 },
@@ -185,7 +188,7 @@ learningContentSchema.index({ contentGroupId: 1, contentLanguage: 1 }, { unique:
 // Programme records are deliberately separate from learning media. Only an
 // approved publishing workflow may create published records; this phase adds
 // no public authoring route and seeds no catalogue data.
-const programmeSchema = new Schema({
+const programmeSchema = createSchema({
   programmeId: { type: String, required: true, trim: true, lowercase: true, unique: true, maxlength: 120 },
   title: { type: String, required: true, trim: true, maxlength: 240 },
   description: { type: String, required: true, maxlength: 4000 },
@@ -208,7 +211,7 @@ const programmeSchema = new Schema({
 }, { timestamps: true, collection: 'nte_programmes' });
 programmeSchema.index({ publicationStatus: 1, contentLanguage: 1, publishedAt: -1 });
 
-const programmeModuleSchema = new Schema({
+const programmeModuleSchema = createSchema({
   programmeId: { type: String, required: true, index: true },
   moduleId: { type: String, required: true, trim: true, maxlength: 120 },
   title: { type: String, required: true, trim: true, maxlength: 240 },
@@ -219,7 +222,7 @@ const programmeModuleSchema = new Schema({
 }, { timestamps: true, collection: 'nte_programme_modules' });
 programmeModuleSchema.index({ programmeId: 1, moduleId: 1, contentLanguage: 1 }, { unique: true });
 
-const programmeActivitySchema = new Schema({
+const programmeActivitySchema = createSchema({
   programmeId: { type: String, required: true, index: true },
   activityId: { type: String, required: true, trim: true, maxlength: 120 },
   moduleId: { type: String, trim: true, maxlength: 120 },
@@ -234,7 +237,7 @@ const programmeActivitySchema = new Schema({
 programmeActivitySchema.index({ programmeId: 1, publicationStatus: 1, sortOrder: 1 });
 programmeActivitySchema.index({ programmeId: 1, activityId: 1, contentLanguage: 1 }, { unique: true });
 
-const programmeEnrollmentSchema = new Schema({
+const programmeEnrollmentSchema = createSchema({
   programmeId: { type: String, required: true, index: true },
   familyId: { type: objectId, ref: 'NteFamily', required: true, index: true },
   guardianId: { type: objectId, ref: 'NteParentAccount', required: true, index: true },
@@ -245,7 +248,7 @@ const programmeEnrollmentSchema = new Schema({
 }, { timestamps: true, collection: 'nte_programme_enrollments' });
 programmeEnrollmentSchema.index({ programmeId: 1, studentId: 1 }, { unique: true });
 
-const programmeProgressSchema = new Schema({
+const programmeProgressSchema = createSchema({
   programmeId: { type: String, required: true, index: true },
   activityId: { type: String, required: true },
   familyId: { type: objectId, ref: 'NteFamily', required: true, index: true },
@@ -258,7 +261,7 @@ const programmeProgressSchema = new Schema({
 }, { timestamps: true, collection: 'nte_programme_progress' });
 programmeProgressSchema.index({ programmeId: 1, activityId: 1, studentId: 1 }, { unique: true });
 
-const paymentOrderSchema = new Schema({
+const paymentOrderSchema = createSchema({
   orderId: { type: String, required: true, unique: true, immutable: true, index: true },
   idempotencyKey: { type: String, required: true, immutable: true, maxlength: 120 },
   guardianId: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true, index: true },
@@ -287,7 +290,7 @@ paymentOrderSchema.index({ guardianId: 1, idempotencyKey: 1 }, { unique: true })
 paymentOrderSchema.index({ providerId: 1, providerOrderReference: 1 }, { unique: true, sparse: true });
 paymentOrderSchema.index({ providerId: 1, providerTransactionReference: 1 }, { unique: true, sparse: true });
 
-const paymentEntitlementSchema = new Schema({
+const paymentEntitlementSchema = createSchema({
   guardianId: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true, index: true },
   familyId: { type: objectId, ref: 'NteFamily', required: true, immutable: true, index: true },
   studentId: { type: objectId, ref: 'NteStudentProfile', required: true, immutable: true, index: true },
@@ -306,7 +309,7 @@ const paymentEntitlementSchema = new Schema({
 }, { timestamps: true, collection: 'nte_payment_entitlements' });
 paymentEntitlementSchema.index({ guardianId: 1, studentId: 1, programmeId: 1, status: 1 });
 
-const paymentWebhookEventSchema = new Schema({
+const paymentWebhookEventSchema = createSchema({
   providerId: { type: String, required: true, immutable: true },
   providerEventId: { type: String, required: true, immutable: true },
   orderId: { type: String, required: true, immutable: true, index: true },
@@ -317,7 +320,7 @@ const paymentWebhookEventSchema = new Schema({
 }, { timestamps: false, collection: 'nte_payment_webhook_events' });
 paymentWebhookEventSchema.index({ providerId: 1, providerEventId: 1 }, { unique: true });
 
-const refundRequestSchema = new Schema({
+const refundRequestSchema = createSchema({
   refundRequestId: { type: String, required: true, unique: true, immutable: true },
   orderId: { type: String, required: true, immutable: true, index: true },
   guardianId: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true, index: true },
@@ -335,7 +338,7 @@ const refundRequestSchema = new Schema({
 }, { timestamps: true, collection: 'nte_refund_requests' });
 refundRequestSchema.index({ guardianId: 1, createdAt: -1 });
 
-const paymentSupportNoteSchema = new Schema({
+const paymentSupportNoteSchema = createSchema({
   refundRequestId: { type: String, required: true, index: true, immutable: true },
   authorId: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true },
   body: { type: String, required: true, trim: true, minlength: 1, maxlength: 2000 },
@@ -343,7 +346,7 @@ const paymentSupportNoteSchema = new Schema({
 }, { timestamps: false, collection: 'nte_payment_support_notes' });
 paymentSupportNoteSchema.index({ refundRequestId: 1, createdAt: 1 });
 
-const paymentAuditSchema = new Schema({
+const paymentAuditSchema = createSchema({
   actorType: { type: String, enum: ['guardian', 'finance_support', 'provider'], required: true, immutable: true },
   actorId: { type: objectId, ref: 'NteParentAccount', immutable: true },
   eventType: { type: String, required: true, maxlength: 100, immutable: true },
@@ -355,7 +358,7 @@ const paymentAuditSchema = new Schema({
 }, { timestamps: false, collection: 'nte_payment_audit_events' });
 paymentAuditSchema.index({ actorId: 1, occurredAt: -1 });
 
-const clubApplicationSchema = new Schema({
+const clubApplicationSchema = createSchema({
   applicantId: { type: objectId, ref: 'NteParentAccount', required: true, index: true },
   name: { type: String, required: true, trim: true, minlength: 2, maxlength: 100 },
   purpose: { type: String, required: true, trim: true, minlength: 10, maxlength: 1200 },
@@ -371,7 +374,7 @@ const clubApplicationSchema = new Schema({
 }, { timestamps: true, collection: 'nte_club_applications' });
 clubApplicationSchema.index({ applicantId: 1, createdAt: -1 });
 
-const clubSchema = new Schema({
+const clubSchema = createSchema({
   name: { type: String, required: true, trim: true, maxlength: 100 },
   purpose: { type: String, required: true, trim: true, maxlength: 1200 },
   approximateLocality: { type: String, required: true, trim: true, maxlength: 100 },
@@ -388,7 +391,7 @@ const clubSchema = new Schema({
 }, { timestamps: true, collection: 'nte_clubs' });
 clubSchema.index({ status: 1, approximateLocality: 1, ageBands: 1 });
 
-const clubMembershipSchema = new Schema({
+const clubMembershipSchema = createSchema({
   clubId: { type: objectId, ref: 'NteClub', required: true, index: true },
   familyId: { type: objectId, ref: 'NteFamily', required: true, index: true },
   guardianId: { type: objectId, ref: 'NteParentAccount', required: true, index: true },
@@ -405,7 +408,7 @@ const clubMembershipSchema = new Schema({
 clubMembershipSchema.index({ guardianId: 1, createdAt: -1 });
 clubMembershipSchema.index({ clubId: 1, status: 1, createdAt: 1 });
 
-const clubAnnouncementSchema = new Schema({
+const clubAnnouncementSchema = createSchema({
   clubId: { type: objectId, ref: 'NteClub', required: true, index: true, immutable: true },
   authorId: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true },
   body: { type: String, required: true, trim: true, minlength: 1, maxlength: 1600 },
@@ -415,7 +418,7 @@ const clubAnnouncementSchema = new Schema({
 }, { timestamps: true, collection: 'nte_club_announcements' });
 clubAnnouncementSchema.index({ clubId: 1, status: 1, createdAt: -1 });
 
-const eventSchema = new Schema({
+const eventSchema = createSchema({
   clubId: { type: objectId, ref: 'NteClub', required: true, index: true, immutable: true },
   title: { type: String, required: true, trim: true, minlength: 2, maxlength: 160 },
   description: { type: String, required: true, trim: true, minlength: 10, maxlength: 4000 },
@@ -433,7 +436,7 @@ const eventSchema = new Schema({
 }, { timestamps: true, collection: 'nte_events' });
 eventSchema.index({ status: 1, startsAt: 1, clubId: 1 });
 
-const eventRegistrationSchema = new Schema({
+const eventRegistrationSchema = createSchema({
   eventId: { type: objectId, ref: 'NteEvent', required: true, index: true },
   clubId: { type: objectId, ref: 'NteClub', required: true, index: true },
   familyId: { type: objectId, ref: 'NteFamily', required: true, index: true },
@@ -448,7 +451,7 @@ const eventRegistrationSchema = new Schema({
 eventRegistrationSchema.index({ eventId: 1, status: 1, createdAt: 1 });
 eventRegistrationSchema.index({ guardianId: 1, createdAt: -1 });
 
-const attendanceSchema = new Schema({
+const attendanceSchema = createSchema({
   eventId: { type: objectId, ref: 'NteEvent', required: true, immutable: true, index: true },
   registrationId: { type: objectId, ref: 'NteEventRegistration', required: true, immutable: true, unique: true },
   studentId: { type: objectId, ref: 'NteStudentProfile', required: true, immutable: true },
@@ -457,7 +460,7 @@ const attendanceSchema = new Schema({
   recordedAt: { type: Date, required: true },
 }, { timestamps: true, collection: 'nte_event_attendance' });
 
-const eventAnnouncementSchema = new Schema({
+const eventAnnouncementSchema = createSchema({
   eventId: { type: objectId, ref: 'NteEvent', required: true, immutable: true, index: true },
   authorId: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true },
   body: { type: String, required: true, trim: true, minlength: 1, maxlength: 1600 },
@@ -467,8 +470,8 @@ const eventAnnouncementSchema = new Schema({
 }, { timestamps: true, collection: 'nte_event_announcements' });
 eventAnnouncementSchema.index({ eventId: 1, status: 1, createdAt: -1 });
 
-function model<T = any>(name: string, schema: Schema): Model<T> {
-  return (mongoose.models[name] as Model<T> | undefined) ?? mongoose.model<T>(name, schema);
+function model(name: string, schema: Schema<any>): Model<any> {
+  return (mongoose.models[name] as Model<any> | undefined) ?? (mongoose.model(name, schema) as Model<any>);
 }
 
 export const ParentAccount = model('NteParentAccount', parentSchema);
@@ -505,7 +508,7 @@ export const EventRegistration = model('NteEventRegistration', eventRegistration
 export const EventAttendance = model('NteEventAttendance', attendanceSchema);
 export const EventAnnouncement = model('NteEventAnnouncement', eventAnnouncementSchema);
 
-export const allNteModels = [ParentAccount, Family, StudentProfile, GuardianRelationship,
+export const allNteModels: Model<any>[] = [ParentAccount, Family, StudentProfile, GuardianRelationship,
   AuthSession, IdentityChallenge, ConsentPolicy, ConsentEvent, AuditEvent, SafeguardingReport, SafeguardingNote, SafeguardingAuditEvent, LearningTopic, LearningContent,
   Programme, ProgrammeModule, ProgrammeActivity, ProgrammeEnrollment, ProgrammeProgress,
   PaymentOrder, PaymentEntitlement, PaymentWebhookEvent, RefundRequest, PaymentSupportNote, PaymentAuditEvent,

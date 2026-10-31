@@ -273,7 +273,7 @@ export async function setProgrammeComponentPublication(req: Request, res: Respon
     } else {
       const activity = component as typeof ProgrammeActivity.prototype;
       if (!activity.ageBands.length || !activity.title.trim() || !activity.description.trim()) throw badRequest('CONTENT_INCOMPLETE', 'Add an activity title, description and age eligibility before publishing.');
-      if (activity.ageBands.some((band) => !programme.ageBands.includes(band))) throw badRequest('CONTENT_AGE_MISMATCH', 'Activity eligibility must be within the programme age groups.');
+      if (activity.ageBands.some((band: string) => !programme.ageBands.includes(band))) throw badRequest('CONTENT_AGE_MISMATCH', 'Activity eligibility must be within the programme age groups.');
       if (activity.moduleId && !(await ProgrammeModule.exists({ programmeId, moduleId: activity.moduleId, publicationStatus: 'published' }))) throw badRequest('CONTENT_MODULE_UNAVAILABLE', 'Publish the linked module before this activity.');
       if (activity.learningContentId) {
         const linked = await LearningContent.findOne({ contentId: activity.learningContentId, publicationStatus: 'published' }).select('+mediaAssetKey');

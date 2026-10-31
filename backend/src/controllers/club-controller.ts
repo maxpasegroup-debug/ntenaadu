@@ -120,7 +120,7 @@ export async function createApplication(req: Request, res: Response): Promise<vo
   if (purpose.length < 10 || purpose.length > 1200) throw badRequest('CLUB_PURPOSE_INVALID', 'Describe the club purpose in 10 to 1200 characters.');
   if (!approximateLocality || approximateLocality.length > 100) throw badRequest('CLUB_LOCALITY_INVALID', 'Enter an approximate town, panchayat, or district only.');
   if (!meetingFormats.has(meetingFormat)) throw badRequest('MEETING_FORMAT_INVALID', 'Select a supported meeting format.');
-  if (selectedAgeBands.length === 0 || selectedAgeBands.some((value) => !ageBands.has(value))) throw badRequest('AGE_GROUP_INVALID', 'Select at least one available age band.');
+  if (selectedAgeBands.length === 0 || selectedAgeBands.some((value) => typeof value !== 'string' || !ageBands.has(value))) throw badRequest('AGE_GROUP_INVALID', 'Select at least one available age band.');
   const verification = await adultVerificationProvider.checkApplicant(current.parentId);
   const status = verification === 'verified' ? 'pending_review' : 'awaiting_verification';
   const application = await ClubApplication.create({

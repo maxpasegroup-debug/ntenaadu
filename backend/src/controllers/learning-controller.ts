@@ -137,7 +137,7 @@ export async function listContent(req: Request, res: Response): Promise<void> {
     items: page.map((item) => ({
       ...contentDto(item, [...(languagesByGroup.get(item.contentGroupId) ?? new Set([item.contentLanguage]))].sort(),
         item.accessRequirement !== 'paid' || Boolean(student && item.programmeId && entitledProgrammeIds.has(item.programmeId))),
-      topics: (item.topicIds ?? []).map((id) => ({ id, labels: topicMap.get(id) ?? {} })),
+      topics: ((item.topicIds ?? []) as string[]).map((id: string) => ({ id, labels: topicMap.get(id) ?? {} })),
     })),
     availableLanguages: (availableContentLanguages as string[]).filter((value) => supportedLanguages.has(value)).sort(),
     programmes: [...programmes.entries()].map(([id, names]) => ({ id, names })),

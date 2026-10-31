@@ -86,7 +86,7 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
   if (title.length < 2 || title.length > 160 || description.length < 10 || description.length > 4000 || !approximateLocality || approximateLocality.length > 100 || instructions.length > 2000) throw badRequest('EVENT_DETAILS_INVALID', 'Complete the event details using the stated limits.');
   if (startsAt <= new Date() || endsAt <= startsAt) throw badRequest('EVENT_TIME_INVALID', 'Choose a future start time and a later end time.');
   if (!Number.isInteger(capacity) || capacity < 1 || capacity > 10000) throw badRequest('EVENT_CAPACITY_INVALID', 'Set an event capacity between 1 and 10000.');
-  if (selectedBands.some((band) => !(club.ageBands ?? []).includes(band))) throw badRequest('EVENT_AGE_BANDS_INVALID', 'Event age groups must be within the approved club age groups.');
+  if (selectedBands.some((band: string) => !(club.ageBands ?? []).includes(band))) throw badRequest('EVENT_AGE_BANDS_INVALID', 'Event age groups must be within the approved club age groups.');
   const session = await mongoose.startSession(); let event: typeof Event.prototype | undefined;
   try { await session.withTransaction(async () => {
     const [created] = await Event.create([{ clubId: club._id, title, description, startsAt, endsAt, approximateLocality, ageBands: selectedBands, capacity, participationInstructions: instructions, status: 'published', createdBy: current.parentId }], { session });
@@ -104,9 +104,9 @@ export async function updateEvent(req: Request, res: Response): Promise<void> {
   const startsAt = req.body?.startsAt === undefined ? event.startsAt : parseDate(req.body.startsAt, 'EVENT_START_INVALID');
   const endsAt = req.body?.endsAt === undefined ? event.endsAt : parseDate(req.body.endsAt, 'EVENT_END_INVALID');
   const capacity = req.body?.capacity === undefined ? event.capacity : req.body.capacity;
-  const selectedBands = req.body?.ageBands === undefined ? event.ageBands : bands(req.body.ageBands);
+  const selectedBands: string[] = req.body?.ageBands === undefined ? event.ageBands : bands(req.body.ageBands);
   if (startsAt <= new Date() || endsAt <= startsAt || !Number.isInteger(capacity) || capacity < event.confirmedCount || capacity > 10000) throw badRequest('EVENT_UPDATE_INVALID', 'The new date or capacity is invalid. Capacity cannot be lower than confirmed registrations.');
-  if (selectedBands.some((band) => !(club.ageBands ?? []).includes(band))) throw badRequest('EVENT_AGE_BANDS_INVALID', 'Event age groups must be within the approved club age groups.');
+  if (selectedBands.some((band: string) => !(club.ageBands ?? []).includes(band))) throw badRequest('EVENT_AGE_BANDS_INVALID', 'Event age groups must be within the approved club age groups.');
   if (selectedBands.join(',') !== (event.ageBands ?? []).join(',')) {
     const activeRegistrations = await EventRegistration.find({ eventId: event._id, status: { $in: ['pending_guardian', 'confirmed', 'waitlisted'] } }).select('studentId');
     const activeStudents = await StudentProfile.find({ _id: { $in: activeRegistrations.map((registration) => registration.studentId) } }).select('ageGroup');

@@ -195,7 +195,7 @@ export async function grantConsent(req: Request, res: Response): Promise<void> {
   try {
     await session.withTransaction(async () => {
       const relationshipUpdate = await GuardianRelationship.updateOne({ _id: relationship._id, guardianId: current.parentId, relationshipStatus: { $ne: 'archived' } }, { $set: {
-        relationshipStatus: 'active', consentStatus: 'granted', consentPolicyId, consentPolicyVersion: policyVersion,
+        relationshipStatus: 'active', consentStatus: 'granted', consentPolicyId: policyId, consentPolicyVersion: policyVersion,
         consentLanguageCode: languageCode, consentRecordedAt: now, consentRevokedAt: null,
       } }, { session });
       if (relationshipUpdate.matchedCount !== 1) throw notFound();
