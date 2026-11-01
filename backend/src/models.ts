@@ -34,7 +34,7 @@ familySchema.index({ guardianId: 1 }, { unique: true });
 
 const familyGuardianSchema = createSchema({
   familyId: { type: objectId, ref: 'NteFamily', required: true, index: true, immutable: true },
-  guardianId: { type: objectId, ref: 'NteParentAccount', required: true, index: true, immutable: true },
+  guardianId: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true },
   invitedBy: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true },
   status: { type: String, enum: ['active', 'disputed', 'revoked'], default: 'active', required: true, index: true },
   permissions: { type: [{ type: String, enum: ['view_students'] }], default: ['view_students'], required: true },
@@ -42,7 +42,10 @@ const familyGuardianSchema = createSchema({
   revokedAt: Date,
 }, { timestamps: true, collection: 'nte_family_guardians' });
 familyGuardianSchema.index({ familyId: 1, guardianId: 1 }, { unique: true });
-familyGuardianSchema.index({ guardianId: 1 }, { unique: true, partialFilterExpression: { status: 'active' } });
+familyGuardianSchema.index(
+  { guardianId: 1 },
+  { unique: true, partialFilterExpression: { status: 'active' }, name: 'guardianId_active_unique' },
+);
 
 const familyInvitationSchema = createSchema({
   familyId: { type: objectId, ref: 'NteFamily', required: true, immutable: true, index: true },
