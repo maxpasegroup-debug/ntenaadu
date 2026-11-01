@@ -12,6 +12,7 @@ abstract interface class ProgrammeRepository {
   Future<ProgrammeDetails> details(String id, {String? studentProfileId});
   Future<String> enroll(String id, String studentProfileId);
   Future<void> updateActivity(String programmeId, String activityId, String studentProfileId, String status);
+  Future<void> submitActivity(String programmeId, String activityId, String studentProfileId, String responseText);
 }
 
 class ProgrammeApiRepository implements ProgrammeRepository {
@@ -50,6 +51,10 @@ class ProgrammeApiRepository implements ProgrammeRepository {
   Future<void> updateActivity(String programmeId, String activityId, String studentProfileId, String status) => _request(() async {
     await client.dio.put('/programmes/${Uri.encodeComponent(programmeId)}/activities/${Uri.encodeComponent(activityId)}/progress', data: {'studentProfileId': studentProfileId, 'status': status});
   });
+  @override
+  Future<void> submitActivity(String programmeId, String activityId, String studentProfileId, String responseText) => _request(() async {
+    await client.dio.post<void>('/programmes/${Uri.encodeComponent(programmeId)}/activities/${Uri.encodeComponent(activityId)}/submissions', data: {'studentProfileId': studentProfileId, 'responseText': responseText});
+  });
 }
 
 class UnconfiguredProgrammeRepository implements ProgrammeRepository {
@@ -59,4 +64,5 @@ class UnconfiguredProgrammeRepository implements ProgrammeRepository {
   @override Future<ProgrammeDetails> details(String id, {String? studentProfileId}) async => _fail();
   @override Future<String> enroll(String id, String studentProfileId) async => _fail();
   @override Future<void> updateActivity(String programmeId, String activityId, String studentProfileId, String status) async => _fail();
+  @override Future<void> submitActivity(String programmeId, String activityId, String studentProfileId, String responseText) async => _fail();
 }

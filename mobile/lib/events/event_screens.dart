@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../design_system/nte_design_system.dart';
 import '../localization/locale_controller.dart';
 import '../onboarding/onboarding_models.dart';
 import 'event_repository.dart';
 
-const _forest=Color(0xFF263A30),_green=Color(0xFF4C8B69),_saffron=Color(0xFFF3A66B),_ivory=Color(0xFFF6F3EC);
+const _forest=NteColors.forest,_green=NteColors.green,_saffron=NteColors.saffron,_ivory=NteColors.ivory;
 
 class EventsScreen extends StatefulWidget {
  const EventsScreen({required this.locale,required this.repository,required this.students,this.studentProfileId,this.clubId,this.studentView=false,this.onReportConcern,super.key});

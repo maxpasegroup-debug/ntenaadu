@@ -11,6 +11,10 @@ const parentSchema = createSchema({
   contactType: { type: String, enum: ['email', 'phone'], required: true },
   passwordHash: { type: String, required: true, select: false },
   preferredLanguage: { type: String, enum: ['en', 'hi', 'ml', 'ta'], default: 'en', required: true },
+  membershipCategory: { type: String, enum: ['mother', 'father', 'guardian'], default: 'guardian', required: true, index: true },
+  communityNetworkingOptIn: { type: Boolean, default: false, required: true },
+  membershipId: { type: String, unique: true, sparse: true, immutable: true },
+  membershipStatus: { type: String, enum: ['pending_verification', 'active', 'suspended'], default: 'active', required: true, index: true },
   verificationStatus: { type: String, enum: ['pending', 'verified'], default: 'pending', index: true },
   verifiedAt: Date,
   adultVerificationStatus: { type: String, enum: ['unavailable', 'pending', 'verified'], default: 'unavailable', select: false, index: true },
@@ -22,9 +26,50 @@ const parentSchema = createSchema({
 parentSchema.index({ contact: 1 }, { unique: true });
 
 const familySchema = createSchema({
-  guardianId: { type: objectId, ref: 'NteParentAccount', required: true, unique: true, index: true },
+  guardianId: { type: objectId, ref: 'NteParentAccount', required: true },
   status: { type: String, enum: ['active', 'closed'], default: 'active', required: true },
+  closedReason: { type: String, enum: ['connected_family'], select: false },
 }, { timestamps: true, collection: 'nte_families' });
+familySchema.index({ guardianId: 1 }, { unique: true });
+
+const familyGuardianSchema = createSchema({
+  familyId: { type: objectId, ref: 'NteFamily', required: true, index: true, immutable: true },
+  guardianId: { type: objectId, ref: 'NteParentAccount', required: true, index: true, immutable: true },
+  invitedBy: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true },
+  status: { type: String, enum: ['active', 'disputed', 'revoked'], default: 'active', required: true, index: true },
+  permissions: { type: [{ type: String, enum: ['view_students'] }], default: ['view_students'], required: true },
+  acceptedAt: { type: Date, required: true },
+  revokedAt: Date,
+}, { timestamps: true, collection: 'nte_family_guardians' });
+familyGuardianSchema.index({ familyId: 1, guardianId: 1 }, { unique: true });
+familyGuardianSchema.index({ guardianId: 1 }, { unique: true, partialFilterExpression: { status: 'active' } });
+
+const familyInvitationSchema = createSchema({
+  familyId: { type: objectId, ref: 'NteFamily', required: true, immutable: true, index: true },
+  inviterId: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true },
+  inviteeContact: { type: String, required: true, lowercase: true, trim: true },
+  contactType: { type: String, enum: ['email', 'phone'], required: true },
+  tokenHash: { type: String, required: true, unique: true, select: false },
+  status: { type: String, enum: ['pending', 'accepted', 'rejected', 'revoked', 'expired'], default: 'pending', required: true, index: true },
+  expiresAt: { type: Date, required: true, index: true },
+  respondedAt: Date,
+  acceptedBy: { type: objectId, ref: 'NteParentAccount' },
+}, { timestamps: true, collection: 'nte_family_invitations' });
+familyInvitationSchema.index({ familyId: 1, inviteeContact: 1, status: 1 });
+
+const familyAccessDisputeSchema = createSchema({
+  familyId: { type: objectId, ref: 'NteFamily', required: true, index: true, immutable: true },
+  reporterId: { type: objectId, ref: 'NteParentAccount', required: true, index: true, immutable: true },
+  subjectGuardianId: { type: objectId, ref: 'NteParentAccount', required: true, index: true, immutable: true },
+  affectedGuardianId: { type: objectId, ref: 'NteParentAccount', required: true, index: true, immutable: true },
+  reason: { type: String, required: true, trim: true, minlength: 10, maxlength: 2000, select: false, immutable: true },
+  status: { type: String, enum: ['open', 'resolved'], default: 'open', required: true, index: true },
+  resolution: { type: String, enum: ['maintain_restriction', 'restore_connection'] },
+  resolutionReason: { type: String, trim: true, minlength: 10, maxlength: 2000, select: false },
+  resolvedBy: { type: objectId, ref: 'NteParentAccount', select: false },
+  resolvedAt: Date,
+}, { timestamps: true, collection: 'nte_family_access_disputes' });
+familyAccessDisputeSchema.index({ status: 1, createdAt: 1 });
 
 const studentSchema = createSchema({
   familyId: { type: objectId, ref: 'NteFamily', required: true, index: true },
@@ -160,7 +205,8 @@ const learningContentSchema = createSchema({
   title: { type: String, required: true, trim: true, maxlength: 240 },
   description: { type: String, required: true, maxlength: 4000 },
   contentLanguage: { type: String, enum: ['en', 'hi', 'ml', 'ta'], required: true, index: true },
-  mediaType: { type: String, enum: ['audio', 'video'], required: true },
+  mediaType: { type: String, enum: ['audio', 'video', 'reading'], required: true },
+  readingBody: { type: String, trim: true, maxlength: 20000, select: false },
   mediaAssetKey: { type: String, trim: true, maxlength: 500, select: false },
   thumbnailAssetKey: { type: String, trim: true, maxlength: 500, select: false },
   durationSeconds: { type: Number, min: 1 },
@@ -226,6 +272,10 @@ const programmeActivitySchema = createSchema({
   programmeId: { type: String, required: true, index: true },
   activityId: { type: String, required: true, trim: true, maxlength: 120 },
   moduleId: { type: String, trim: true, maxlength: 120 },
+  stage: { type: String, enum: ['learn', 'practise', 'participate', 'take_action', 'reflect', 'grow'], default: 'learn', required: true, index: true },
+  activityType: { type: String, enum: ['lesson', 'practice', 'assignment', 'participation', 'action', 'reflection', 'recognition'], default: 'lesson', required: true },
+  responseRequired: { type: Boolean, default: false, required: true },
+  requiresReview: { type: Boolean, default: false, required: true },
   title: { type: String, required: true, trim: true, maxlength: 240 },
   description: { type: String, required: true, maxlength: 4000 },
   contentLanguage: { type: String, enum: ['en', 'hi', 'ml', 'ta'], required: true },
@@ -257,9 +307,46 @@ const programmeProgressSchema = createSchema({
   status: { type: String, enum: ['not_started', 'in_progress', 'completed'], required: true },
   recordedBy: { type: objectId, ref: 'NteParentAccount', required: true },
   recordedAt: { type: Date, required: true },
-  completionSource: { type: String, enum: ['guardian_recorded'], default: 'guardian_recorded', required: true },
+  completionSource: { type: String, enum: ['guardian_recorded', 'activity_submission', 'system_earned'], default: 'guardian_recorded', required: true },
 }, { timestamps: true, collection: 'nte_programme_progress' });
 programmeProgressSchema.index({ programmeId: 1, activityId: 1, studentId: 1 }, { unique: true });
+
+const programmeSubmissionSchema = createSchema({
+  programmeId: { type: String, required: true, index: true, immutable: true },
+  activityId: { type: String, required: true, index: true, immutable: true },
+  familyId: { type: objectId, ref: 'NteFamily', required: true, index: true, immutable: true },
+  guardianId: { type: objectId, ref: 'NteParentAccount', required: true, index: true, immutable: true },
+  studentId: { type: objectId, ref: 'NteStudentProfile', required: true, index: true, immutable: true },
+  attempt: { type: Number, required: true, min: 1, immutable: true },
+  responseText: { type: String, required: true, trim: true, minlength: 1, maxlength: 4000, select: false, immutable: true },
+  status: { type: String, enum: ['submitted', 'reviewed', 'needs_revision'], default: 'submitted', required: true, index: true },
+  feedback: { type: String, trim: true, maxlength: 2000, select: false },
+  reviewedBy: { type: objectId, ref: 'NteParentAccount' },
+  reviewedAt: Date,
+  submittedAt: { type: Date, required: true, immutable: true },
+}, { timestamps: true, collection: 'nte_programme_submissions' });
+programmeSubmissionSchema.index({ programmeId: 1, activityId: 1, studentId: 1, attempt: 1 }, { unique: true });
+programmeSubmissionSchema.index({ status: 1, submittedAt: 1 });
+
+const learningContentProgressSchema = createSchema({
+  contentId: { type: String, required: true, index: true, immutable: true },
+  accountId: { type: objectId, ref: 'NteParentAccount', required: true, index: true, immutable: true },
+  familyId: { type: objectId, ref: 'NteFamily' },
+  studentId: { type: objectId, ref: 'NteStudentProfile' },
+  status: { type: String, enum: ['in_progress', 'completed'], required: true },
+  lastOpenedAt: { type: Date, required: true },
+  completedAt: Date,
+}, { timestamps: true, collection: 'nte_learning_progress' });
+learningContentProgressSchema.index({ contentId: 1, accountId: 1, studentId: 1 }, { unique: true });
+learningContentProgressSchema.index({ accountId: 1, lastOpenedAt: -1 });
+
+const learningBookmarkSchema = createSchema({
+  contentId: { type: String, required: true, index: true, immutable: true },
+  accountId: { type: objectId, ref: 'NteParentAccount', required: true, index: true, immutable: true },
+  studentId: { type: objectId, ref: 'NteStudentProfile' },
+  bookmarkedAt: { type: Date, required: true },
+}, { timestamps: true, collection: 'nte_learning_bookmarks' });
+learningBookmarkSchema.index({ accountId: 1, contentId: 1, studentId: 1 }, { unique: true });
 
 const paymentOrderSchema = createSchema({
   orderId: { type: String, required: true, unique: true, immutable: true, index: true },
@@ -359,6 +446,7 @@ const paymentAuditSchema = createSchema({
 paymentAuditSchema.index({ actorId: 1, occurredAt: -1 });
 
 const clubApplicationSchema = createSchema({
+  communityId: { type: objectId, ref: 'NteCommunity', index: true },
   applicantId: { type: objectId, ref: 'NteParentAccount', required: true, index: true },
   name: { type: String, required: true, trim: true, minlength: 2, maxlength: 100 },
   purpose: { type: String, required: true, trim: true, minlength: 10, maxlength: 1200 },
@@ -375,6 +463,7 @@ const clubApplicationSchema = createSchema({
 clubApplicationSchema.index({ applicantId: 1, createdAt: -1 });
 
 const clubSchema = createSchema({
+  communityId: { type: objectId, ref: 'NteCommunity', index: true },
   name: { type: String, required: true, trim: true, maxlength: 100 },
   purpose: { type: String, required: true, trim: true, maxlength: 1200 },
   approximateLocality: { type: String, required: true, trim: true, maxlength: 100 },
@@ -470,12 +559,85 @@ const eventAnnouncementSchema = createSchema({
 }, { timestamps: true, collection: 'nte_event_announcements' });
 eventAnnouncementSchema.index({ eventId: 1, status: 1, createdAt: -1 });
 
+// Configurable national/state/district/local community tree. Region labels and
+// codes are data, so expansion is not tied to a single state's geography.
+const communitySchema = createSchema({
+  level: { type: String, enum: ['national', 'state', 'district', 'local'], required: true, index: true },
+  audience: { type: String, enum: ['all', 'families', 'mothers', 'fathers', 'students'], default: 'all', required: true, index: true },
+  parentCommunityId: { type: objectId, ref: 'NteCommunity', default: null, index: true },
+  code: { type: String, required: true, trim: true, lowercase: true, maxlength: 80 },
+  name: { type: String, required: true, trim: true, maxlength: 120 },
+  localityLabel: { type: String, trim: true, maxlength: 160 },
+  status: { type: String, enum: ['draft', 'approved', 'suspended', 'archived'], default: 'draft', required: true, index: true },
+  createdBy: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true },
+  approvedBy: { type: objectId, ref: 'NteParentAccount' }, approvedAt: Date,
+  moderationReason: { type: String, trim: true, maxlength: 1000 },
+}, { timestamps: true, collection: 'nte_communities' });
+communitySchema.index({ parentCommunityId: 1, code: 1 }, { unique: true });
+
+const communityMembershipSchema = createSchema({
+  communityId: { type: objectId, ref: 'NteCommunity', required: true, index: true, immutable: true },
+  accountId: { type: objectId, ref: 'NteParentAccount', required: true, index: true, immutable: true },
+  membershipCategory: { type: String, enum: ['mother', 'father', 'guardian', 'student'], required: true, immutable: true },
+  studentId: { type: objectId, ref: 'NteStudentProfile', index: true, immutable: true },
+  status: { type: String, enum: ['pending_guardian', 'pending_review', 'active', 'rejected', 'cancelled', 'suspended'], default: 'pending_review', required: true, index: true },
+  guardianApprovedAt: Date, decidedBy: { type: objectId, ref: 'NteParentAccount' }, decidedAt: Date,
+  activeKey: { type: String, unique: true, sparse: true, select: false },
+}, { timestamps: true, collection: 'nte_community_memberships' });
+communityMembershipSchema.index({ accountId: 1, communityId: 1, studentId: 1 }, { unique: true });
+communityMembershipSchema.index({ communityId: 1, status: 1, createdAt: 1 });
+
+const communityAnnouncementSchema = createSchema({
+  communityId: { type: objectId, ref: 'NteCommunity', required: true, index: true, immutable: true },
+  authorId: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true },
+  body: { type: String, required: true, trim: true, minlength: 1, maxlength: 1600 },
+  status: { type: String, enum: ['published', 'removed'], default: 'published', required: true, index: true },
+  removedBy: { type: objectId, ref: 'NteParentAccount' }, removedAt: Date,
+}, { timestamps: true, collection: 'nte_community_announcements' });
+communityAnnouncementSchema.index({ communityId: 1, status: 1, createdAt: -1 });
+
+const communityAppointmentSchema = createSchema({
+  communityId: { type: objectId, ref: 'NteCommunity', required: true, index: true, immutable: true },
+  accountId: { type: objectId, ref: 'NteParentAccount', required: true, index: true, immutable: true },
+  role: { type: String, enum: ['state_leader', 'district_leader', 'community_leader', 'community_moderator', 'approved_trainer', 'approved_mentor'], required: true, immutable: true },
+  status: { type: String, enum: ['active', 'revoked'], default: 'active', required: true, index: true },
+  appointedBy: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true }, appointedAt: { type: Date, required: true, immutable: true },
+  revokedBy: { type: objectId, ref: 'NteParentAccount' }, revokedAt: Date, reason: { type: String, trim: true, maxlength: 1000 },
+}, { timestamps: true, collection: 'nte_community_appointments' });
+communityAppointmentSchema.index({ communityId: 1, accountId: 1, role: 1 }, { unique: true, partialFilterExpression: { status: 'active' } });
+
+const communityParticipationSchema = createSchema({
+  communityId: { type: objectId, ref: 'NteCommunity', required: true, index: true, immutable: true },
+  membershipId: { type: objectId, ref: 'NteCommunityMembership', required: true, index: true, immutable: true },
+  activityType: { type: String, enum: ['event_attendance', 'volunteering', 'leadership_contribution', 'practical_activity', 'recognition'], required: true, immutable: true },
+  description: { type: String, required: true, trim: true, minlength: 3, maxlength: 500 },
+  sourceEventId: { type: objectId, ref: 'NteEvent' },
+  recordedBy: { type: objectId, ref: 'NteParentAccount', required: true, immutable: true }, recordedAt: { type: Date, required: true, immutable: true },
+  status: { type: String, enum: ['active', 'retracted'], default: 'active', required: true, index: true },
+}, { timestamps: true, collection: 'nte_community_participation' });
+communityParticipationSchema.index({ membershipId: 1, recordedAt: -1 });
+communityParticipationSchema.index({ membershipId: 1, sourceEventId: 1, activityType: 1 }, { unique: true, partialFilterExpression: { sourceEventId: { $exists: true } } });
+
+const communityIntroductionSchema = createSchema({
+  communityId: { type: objectId, ref: 'NteCommunity', required: true, index: true, immutable: true },
+  requesterId: { type: objectId, ref: 'NteParentAccount', required: true, index: true, immutable: true },
+  recipientId: { type: objectId, ref: 'NteParentAccount', required: true, index: true, immutable: true },
+  message: { type: String, required: true, trim: true, minlength: 10, maxlength: 500, select: false, immutable: true },
+  status: { type: String, enum: ['pending', 'accepted', 'declined', 'cancelled'], default: 'pending', required: true, index: true },
+  decidedAt: Date,
+}, { timestamps: true, collection: 'nte_community_introductions' });
+communityIntroductionSchema.index({ communityId: 1, requesterId: 1, recipientId: 1, status: 1 });
+communityIntroductionSchema.index({ communityId: 1, requesterId: 1, recipientId: 1 }, { unique: true, partialFilterExpression: { status: 'pending' } });
+
 function model(name: string, schema: Schema<any>): Model<any> {
   return (mongoose.models[name] as Model<any> | undefined) ?? (mongoose.model(name, schema) as Model<any>);
 }
 
 export const ParentAccount = model('NteParentAccount', parentSchema);
 export const Family = model('NteFamily', familySchema);
+export const FamilyGuardian = model('NteFamilyGuardian', familyGuardianSchema);
+export const FamilyInvitation = model('NteFamilyInvitation', familyInvitationSchema);
+export const FamilyAccessDispute = model('NteFamilyAccessDispute', familyAccessDisputeSchema);
 export const StudentProfile = model('NteStudentProfile', studentSchema);
 export const GuardianRelationship = model('NteGuardianRelationship', relationshipSchema);
 export const AuthSession = model('NteAuthSession', sessionSchema);
@@ -493,6 +655,9 @@ export const ProgrammeModule = model('NteProgrammeModule', programmeModuleSchema
 export const ProgrammeActivity = model('NteProgrammeActivity', programmeActivitySchema);
 export const ProgrammeEnrollment = model('NteProgrammeEnrollment', programmeEnrollmentSchema);
 export const ProgrammeProgress = model('NteProgrammeProgress', programmeProgressSchema);
+export const ProgrammeSubmission = model('NteProgrammeSubmission', programmeSubmissionSchema);
+export const LearningContentProgress = model('NteLearningContentProgress', learningContentProgressSchema);
+export const LearningBookmark = model('NteLearningBookmark', learningBookmarkSchema);
 export const PaymentOrder = model('NtePaymentOrder', paymentOrderSchema);
 export const PaymentEntitlement = model('NtePaymentEntitlement', paymentEntitlementSchema);
 export const PaymentWebhookEvent = model('NtePaymentWebhookEvent', paymentWebhookEventSchema);
@@ -507,9 +672,17 @@ export const Event = model('NteEvent', eventSchema);
 export const EventRegistration = model('NteEventRegistration', eventRegistrationSchema);
 export const EventAttendance = model('NteEventAttendance', attendanceSchema);
 export const EventAnnouncement = model('NteEventAnnouncement', eventAnnouncementSchema);
+export const Community = model('NteCommunity', communitySchema);
+export const CommunityMembership = model('NteCommunityMembership', communityMembershipSchema);
+export const CommunityAnnouncement = model('NteCommunityAnnouncement', communityAnnouncementSchema);
+export const CommunityAppointment = model('NteCommunityAppointment', communityAppointmentSchema);
+export const CommunityParticipation = model('NteCommunityParticipation', communityParticipationSchema);
+export const CommunityIntroduction = model('NteCommunityIntroduction', communityIntroductionSchema);
 
-export const allNteModels: Model<any>[] = [ParentAccount, Family, StudentProfile, GuardianRelationship,
+export const allNteModels: Model<any>[] = [ParentAccount, Family, FamilyGuardian, FamilyInvitation, FamilyAccessDispute, StudentProfile, GuardianRelationship,
   AuthSession, IdentityChallenge, ConsentPolicy, ConsentEvent, AuditEvent, SafeguardingReport, SafeguardingNote, SafeguardingAuditEvent, LearningTopic, LearningContent,
   Programme, ProgrammeModule, ProgrammeActivity, ProgrammeEnrollment, ProgrammeProgress,
+  ProgrammeSubmission, LearningContentProgress, LearningBookmark,
   PaymentOrder, PaymentEntitlement, PaymentWebhookEvent, RefundRequest, PaymentSupportNote, PaymentAuditEvent,
-  ClubApplication, Club, ClubMembershipRequest, ClubAnnouncement, Event, EventRegistration, EventAttendance, EventAnnouncement];
+  ClubApplication, Club, ClubMembershipRequest, ClubAnnouncement, Event, EventRegistration, EventAttendance, EventAnnouncement,
+  Community, CommunityMembership, CommunityAnnouncement, CommunityAppointment, CommunityParticipation, CommunityIntroduction];

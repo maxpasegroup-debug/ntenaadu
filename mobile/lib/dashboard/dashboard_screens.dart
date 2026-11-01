@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../design_system/nte_design_system.dart';
 import '../localization/language_picker.dart';
 import '../localization/locale_controller.dart';
 import '../learning/learning_screens.dart';
+import '../learning/learning_repository.dart';
+import '../learning/learning_models.dart';
 import '../clubs/club_screens.dart';
 import '../events/event_screens.dart';
 import '../programmes/programme_screens.dart';
@@ -10,10 +13,10 @@ import '../onboarding/onboarding_models.dart';
 import '../onboarding/onboarding_session.dart';
 import '../admin/admin_console.dart';
 
-const _forest = Color(0xFF263A30);
-const _green = Color(0xFF4C8B69);
-const _saffron = Color(0xFFF3A66B);
-const _ivory = Color(0xFFF6F3EC);
+const _forest = NteColors.forest;
+const _green = NteColors.green;
+const _saffron = NteColors.saffron;
+const _ivory = NteColors.ivory;
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({required this.locale, required this.session, required this.familyBuilder, required this.settingsBuilder, required this.adminBuilder, super.key});
@@ -77,7 +80,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _learningVisited
                 ? LearningLibraryTab(locale: widget.locale, repository: widget.session.learningRepository, studentProfileId: _selectedStudent?.localId, onOpenProgrammes: () => setState(() => _tab = 3))
                 : const SizedBox.shrink(),
-            ClubLandingTab(locale: widget.locale, repository: widget.session.clubRepository,
+            ClubLandingTab(locale: widget.locale, repository: widget.session.clubRepository, communityRepository: widget.session.communityRepository,
               students: widget.session.serverStudents, studentProfileId: _selectedStudent?.localId,
               eventRepository: widget.session.eventRepository, onReportConcern: _reportConcern),
             ProgrammeLandingTab(locale: widget.locale, repository: widget.session.programmeRepository,
@@ -122,7 +125,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const SizedBox(height: 10),
           ],
         const SizedBox(height: 12),
-        _MessageCard(icon: Icons.auto_stories_outlined, title: t('dashboard.familyLearningTitle'), body: t('dashboard.learningUnavailable'), color: _green),
+        _LearningHighlights(locale: widget.locale, repository: widget.session.learningRepository, onOpen: () => setState(() => _tab = 1)),
         const SizedBox(height: 10),
         _MessageCard(icon: Icons.spa_outlined, title: t('dashboard.dreamTitle'), body: t('programme.growIntro'), color: _saffron, onTap: () => setState(() => _tab = 3)),
         const SizedBox(height: 10),
@@ -142,7 +145,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       const SizedBox(height: 12),
       _MessageCard(icon: Icons.family_restroom, title: t('dashboard.guardianControlledTitle'), body: t('dashboard.guardianControlledBody'), color: _saffron),
       const SizedBox(height: 16),
-      _MessageCard(icon: Icons.play_circle_outline, title: t('dashboard.continueLearningTitle'), body: t('dashboard.learningUnavailable'), color: _green),
+      _LearningHighlights(locale: widget.locale, repository: widget.session.learningRepository, studentProfileId: profile.localId, onOpen: () => setState(() { _tab = 1; _learningVisited = true; })),
       const SizedBox(height: 10),
       _MessageCard(icon: Icons.library_books_outlined, title: t('dashboard.programmesTitle'), body: t('dashboard.programmesUnavailable'), color: _saffron),
       const SizedBox(height: 10),
@@ -190,6 +193,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
       actions: [TextButton(onPressed: () => Navigator.pop(context), child: Text(t('action.continue')))],
     ));
   }
+}
+
+class _LearningHighlights extends StatefulWidget {
+  const _LearningHighlights({required this.locale, required this.repository, required this.onOpen, this.studentProfileId});
+  final LocaleController locale;
+  final LearningRepository repository;
+  final String? studentProfileId;
+  final VoidCallback onOpen;
+  @override State<_LearningHighlights> createState() => _LearningHighlightsState();
+}
+
+class _LearningHighlightsState extends State<_LearningHighlights> {
+  bool _loading = true, _failed = false;
+  List<Map<String,dynamic>> _recent = [];
+  List<LearningItem> _available = [];
+  @override void initState() { super.initState(); widget.locale.addListener(_localeChanged); _load(); }
+  @override void dispose() { widget.locale.removeListener(_localeChanged); super.dispose(); }
+  void _localeChanged() => _load();
+  @override void didUpdateWidget(covariant _LearningHighlights oldWidget) { super.didUpdateWidget(oldWidget); if (oldWidget.studentProfileId != widget.studentProfileId || oldWidget.locale.locale != widget.locale.locale) _load(); }
+  Future<void> _load() async {
+    setState(() { _loading = true; _failed = false; });
+    try { final rows = await widget.repository.history(studentProfileId: widget.studentProfileId); final catalog = await widget.repository.listContent(studentProfileId: widget.studentProfileId, language: widget.locale.locale.languageCode); if (mounted) setState(() { _recent = rows; _available = catalog.items; _loading = false; }); }
+    catch (_) { if (mounted) setState(() { _failed = true; _loading = false; }); }
+  }
+  @override Widget build(BuildContext context) {
+    final t = widget.locale.text;
+    return Card(color: Colors.white, child: Padding(padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(t('learning.highlightsTitle'), style: Theme.of(context).textTheme.titleMedium?.copyWith(color: _forest, fontWeight: FontWeight.w700)),
+      if (_loading) const Padding(padding: EdgeInsets.all(12), child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
+      else if (_failed) Text(t('learning.highlightsUnavailable'))
+      else if (_recent.isNotEmpty) ...[
+        Text(t('learning.continueLearning'), style: Theme.of(context).textTheme.labelLarge),
+        ..._recent.take(2).map((row) => ListTile(contentPadding: EdgeInsets.zero, title: Text('${row['title'] ?? ''}', maxLines: 1, overflow: TextOverflow.ellipsis), subtitle: Text('${row['status'] ?? ''}'), onTap: () => _openItem('${row['id'] ?? ''}'))),
+      ] else if (_available.isNotEmpty) ...[
+        Text(t('learning.startLearning'), style: Theme.of(context).textTheme.labelLarge),
+        ..._available.take(2).map((item) => ListTile(contentPadding: EdgeInsets.zero, title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis), subtitle: Text(item.contentLanguage.toUpperCase()), onTap: () => _openItem(item.id))),
+      ] else Text(t('learning.highlightsEmpty')),
+      Align(alignment: AlignmentDirectional.centerStart, child: TextButton.icon(onPressed: widget.onOpen, icon: const Icon(Icons.menu_book_outlined), label: Text(t('learning.openLibrary'))),),
+    ])));
+  }
+  void _openItem(String id) { if (id.isEmpty) return; Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => LearningContentDetailScreen(contentId: id, locale: widget.locale, repository: widget.repository, studentProfileId: widget.studentProfileId, onOpenProgrammes: widget.onOpen))); }
 }
 
 class _WelcomeCard extends StatelessWidget {

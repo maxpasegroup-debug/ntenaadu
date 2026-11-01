@@ -62,7 +62,7 @@ export async function members(req: Request, res: Response): Promise<void> {
   if (typeof req.query.status === 'string' && ['active', 'suspended'].includes(req.query.status)) filter.accountStatus = req.query.status;
   if (search) { const expression = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'); filter.$or = [{ name: expression }, { contact: expression }]; }
   const [accounts, total] = await Promise.all([
-    ParentAccount.find(filter).select('name contact contactType verificationStatus verifiedAt accountStatus createdAt').sort({ createdAt: -1 }).skip(offset).limit(limit),
+    ParentAccount.find(filter).select('name contact contactType membershipCategory membershipId membershipStatus verificationStatus verifiedAt accountStatus createdAt').sort({ createdAt: -1 }).skip(offset).limit(limit),
     ParentAccount.countDocuments(filter),
   ]);
   const accountIds = accounts.map((item) => item._id);
@@ -79,6 +79,7 @@ export async function members(req: Request, res: Response): Promise<void> {
   res.json({ members: accounts.map((account) => {
     const family = familyByGuardian.get(String(account._id));
     return { id: String(account._id), name: account.name, contact: account.contact, contactType: account.contactType,
+      membershipCategory: account.membershipCategory ?? 'guardian', membershipId: account.membershipId ?? null, membershipStatus: account.membershipStatus ?? 'active',
       verificationStatus: account.verificationStatus, verifiedAt: account.verifiedAt ?? null, accountStatus: account.accountStatus, createdAt: account.createdAt,
       family: family ? { status: family.status, students: (childrenByFamily.get(String(family._id)) ?? []).map((child) => {
         const relation = relationMap.get(String(child._id));
@@ -97,10 +98,12 @@ export async function setMemberStatus(req: Request, res: Response): Promise<void
   if (!['active', 'suspended'].includes(status) || reason.length < 5 || reason.length > 1000) throw badRequest('MEMBER_ACTION_INVALID', 'Choose a status and enter a reason of at least five characters.');
   const account = await ParentAccount.findById(req.params.parentId);
   if (!account) throw notFound();
-  account.accountStatus = status; if (status === 'suspended') account.sessionVersion += 1;
+  account.accountStatus = status;
+  account.membershipStatus = status === 'suspended' ? 'suspended' : account.verificationStatus === 'verified' ? 'active' : 'pending_verification';
+  if (status === 'suspended') account.sessionVersion += 1;
   await account.save();
-  await appendAudit({ actorId: current.parentId, subjectId: String(account._id), eventType: `admin.parent_account_${status}`, requestId: requestId(req), details: { reason } });
-  res.json({ id: String(account._id), accountStatus: account.accountStatus });
+  await appendAudit({ actorId: current.parentId, subjectId: String(account._id), eventType: `admin.parent_account_${status}`, requestId: requestId(req), details: { reason, membershipStatus: account.membershipStatus } });
+  res.json({ id: String(account._id), accountStatus: account.accountStatus, membershipStatus: account.membershipStatus });
 }
 
 export async function auditLog(req: Request, res: Response): Promise<void> {

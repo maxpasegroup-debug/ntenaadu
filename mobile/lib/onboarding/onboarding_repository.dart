@@ -7,6 +7,7 @@ class GuardianRegistrationRequest {
     required this.password,
     required this.preferredLanguage,
     required this.students,
+    this.membershipCategory = 'guardian',
   });
 
   final String name;
@@ -14,14 +15,48 @@ class GuardianRegistrationRequest {
   final String password;
   final String preferredLanguage;
   final List<StudentProfileDraft> students;
+  final String membershipCategory;
 }
 
 class ParentAccount {
-  const ParentAccount({required this.id, required this.name, required this.contact, required this.preferredLanguage});
+  const ParentAccount({required this.id, required this.name, required this.contact, required this.preferredLanguage, this.membershipCategory = 'guardian', this.membershipId, this.membershipStatus = 'active'});
   final String id;
   final String name;
   final String contact;
   final String preferredLanguage;
+  final String membershipCategory;
+  final String? membershipId;
+  final String membershipStatus;
+}
+
+class GuardianMember {
+  const GuardianMember({required this.id, required this.name, required this.membershipCategory, required this.permissions, this.isOwner = false});
+  final String id;
+  final String name;
+  final String membershipCategory;
+  final List<String> permissions;
+  final bool isOwner;
+}
+
+class GuardianInvitation {
+  const GuardianInvitation({required this.id, required this.status, this.inviterName, this.inviteeContact, this.expiresAt});
+  final String id;
+  final String status;
+  final String? inviterName;
+  final String? inviteeContact;
+  final DateTime? expiresAt;
+}
+
+class GuardianInvitationInbox {
+  const GuardianInvitationInbox({required this.incoming, required this.outgoing});
+  final List<GuardianInvitation> incoming;
+  final List<GuardianInvitation> outgoing;
+}
+
+class CreatedGuardianInvitation {
+  const CreatedGuardianInvitation({required this.invitation, required this.oneTimeToken});
+  final GuardianInvitation invitation;
+  final String oneTimeToken;
 }
 
 class RegistrationResult {
@@ -45,6 +80,7 @@ abstract interface class OnboardingRepository {
   Future<ParentAccount?> restoreSession();
   Future<void> signOut();
   Future<void> updatePreferredLanguage(String languageCode);
+  Future<ParentAccount> updateAccountProfile({required String name, required String membershipCategory});
   Future<void> requestAccountRecovery(String contact);
   Future<void> completeAccountRecovery({required String contact, required String code, required String newPassword});
   Future<List<StudentProfileDraft>> getStudentProfiles();
@@ -54,6 +90,13 @@ abstract interface class OnboardingRepository {
   Future<ConsentPolicyDocument> getConsentPolicy(String languageCode);
   Future<void> recordGuardianConsent(String relationshipId, ConsentPolicyDocument policy);
   Future<void> revokeGuardianConsent(String relationshipId);
+  Future<List<GuardianMember>> getFamilyGuardians();
+  Future<GuardianInvitationInbox> getGuardianInvitations();
+  Future<CreatedGuardianInvitation> createGuardianInvitation(String contact);
+  Future<void> respondToGuardianInvitation({required String invitationId, required String oneTimeToken, required bool accept});
+  Future<void> cancelGuardianInvitation(String invitationId);
+  Future<void> revokeFamilyGuardian(String guardianId);
+  Future<void> reportFamilyAccessDispute({required String guardianId, required String reason});
 }
 
 class OnboardingIntegrationUnavailable implements Exception {
@@ -86,6 +129,9 @@ class UnconfiguredOnboardingRepository implements OnboardingRepository {
   Future<void> updatePreferredLanguage(String languageCode) async => _unavailable();
 
   @override
+  Future<ParentAccount> updateAccountProfile({required String name, required String membershipCategory}) async => _unavailable();
+
+  @override
   Future<void> requestAccountRecovery(String contact) async => _unavailable();
 
   @override
@@ -111,4 +157,25 @@ class UnconfiguredOnboardingRepository implements OnboardingRepository {
 
   @override
   Future<void> revokeGuardianConsent(String relationshipId) async => _unavailable();
+
+  @override
+  Future<List<GuardianMember>> getFamilyGuardians() async => _unavailable();
+
+  @override
+  Future<GuardianInvitationInbox> getGuardianInvitations() async => _unavailable();
+
+  @override
+  Future<CreatedGuardianInvitation> createGuardianInvitation(String contact) async => _unavailable();
+
+  @override
+  Future<void> respondToGuardianInvitation({required String invitationId, required String oneTimeToken, required bool accept}) async => _unavailable();
+
+  @override
+  Future<void> cancelGuardianInvitation(String invitationId) async => _unavailable();
+
+  @override
+  Future<void> revokeFamilyGuardian(String guardianId) async => _unavailable();
+
+  @override
+  Future<void> reportFamilyAccessDispute({required String guardianId, required String reason}) async => _unavailable();
 }

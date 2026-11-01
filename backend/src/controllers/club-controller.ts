@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import type { Request, Response } from 'express';
 import { ApiError, badRequest, forbidden, notFound, unauthorized, unavailable } from '../errors';
-import { AuditEvent, Club, ClubAnnouncement, ClubApplication, ClubMembershipRequest, Family, GuardianRelationship, ParentAccount, StudentProfile } from '../models';
+import { AuditEvent, Club, ClubAnnouncement, ClubApplication, ClubMembershipRequest, Community, CommunityMembership, Family, GuardianRelationship, ParentAccount, StudentProfile } from '../models';
 import { appendAudit } from '../services/audit';
 import { adultVerificationProvider } from '../services/adult-verification';
 
@@ -123,8 +123,15 @@ export async function createApplication(req: Request, res: Response): Promise<vo
   if (selectedAgeBands.length === 0 || selectedAgeBands.some((value) => typeof value !== 'string' || !ageBands.has(value))) throw badRequest('AGE_GROUP_INVALID', 'Select at least one available age band.');
   const verification = await adultVerificationProvider.checkApplicant(current.parentId);
   const status = verification === 'verified' ? 'pending_review' : 'awaiting_verification';
+  let communityId: string | undefined;
+  if (req.body?.communityId != null) {
+    communityId = id(req.body.communityId);
+    const community = await Community.findOne({ _id: communityId, status: 'approved' });
+    const membership = await CommunityMembership.exists({ communityId, accountId: current.parentId, status: 'active', studentId: { $exists: false } });
+    if (!community || !membership) throw forbidden();
+  }
   const application = await ClubApplication.create({
-    applicantId: current.parentId, name, purpose, approximateLocality, meetingFormat,
+    applicantId: current.parentId, ...(communityId ? { communityId } : {}), name, purpose, approximateLocality, meetingFormat,
     ageBands: selectedAgeBands, status, adultVerificationStatus: verification,
   });
   await appendAudit({ actorId: current.parentId, subjectId: String(application._id), eventType: 'club.application_submitted', requestId: current.requestId,
@@ -135,6 +142,7 @@ export async function createApplication(req: Request, res: Response): Promise<vo
 function applicationDto(application: typeof ClubApplication.prototype, applicantName?: string) {
   return {
     id: String(application._id),
+    communityId: application.communityId ? String(application.communityId) : null,
     ...(applicantName ? { applicantName } : {}),
     name: application.name,
     purpose: application.purpose,
@@ -206,7 +214,7 @@ export async function reviewApplication(req: Request, res: Response): Promise<vo
         const applicant = await ParentAccount.updateOne({ _id: application.applicantId, accountStatus: 'active' }, { $set: { adultVerificationStatus: 'verified', adultVerifiedAt: new Date() } }, { session });
         if (applicant.matchedCount !== 1) throw notFound();
         const [created] = await Club.create([{
-          name: application.name, purpose: application.purpose, approximateLocality: application.approximateLocality,
+          ...(application.communityId ? { communityId: application.communityId } : {}), name: application.name, purpose: application.purpose, approximateLocality: application.approximateLocality,
           meetingFormat: application.meetingFormat, ageBands: application.ageBands, status: 'approved',
           leaderAccountIds: [application.applicantId], createdFromApplicationId: application._id,
           approvedBy: current.parentId, approvedAt: new Date(),

@@ -1,4 +1,4 @@
-import { randomInt, createHmac } from 'node:crypto';
+import { randomBytes, randomInt, createHmac } from 'node:crypto';
 import type { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
@@ -22,6 +22,16 @@ function challengeHash(contact: string, purpose: string, code: string): string {
 }
 
 function generateCode(): string { return randomInt(0, 1_000_000).toString().padStart(6, '0'); }
+function generateMembershipId(): string { return `NTE-${randomBytes(12).toString('hex').toUpperCase()}`; }
+
+async function ensureMembershipId(parent: typeof ParentAccount.prototype) {
+  if (parent.membershipId) return parent;
+  const updated = await ParentAccount.findOneAndUpdate(
+    { _id: parent._id, $or: [{ membershipId: { $exists: false } }, { membershipId: null }] },
+    { $set: { membershipId: generateMembershipId() } }, { new: true, runValidators: true },
+  );
+  return updated ?? await ParentAccount.findById(parent._id) ?? parent;
+}
 
 function parentPublicRecord(parent: typeof ParentAccount.prototype) {
   return {
@@ -30,6 +40,9 @@ function parentPublicRecord(parent: typeof ParentAccount.prototype) {
     contact: parent.contact,
     contactType: parent.contactType,
     preferredLanguage: parent.preferredLanguage,
+    membershipCategory: parent.membershipCategory ?? 'guardian',
+    membershipId: parent.membershipId ?? null,
+    membershipStatus: parent.membershipStatus ?? (parent.verificationStatus === 'verified' ? 'active' : 'pending_verification'),
   };
 }
 
@@ -38,11 +51,15 @@ export async function registerParent(req: Request, res: Response): Promise<void>
   const rawContact = req.body?.contact;
   const password = req.body?.password;
   const preferredLanguage = req.body?.preferredLanguage;
+  const membershipCategory = req.body?.membershipCategory ?? 'guardian';
   if (!name || name.length > 120) throw new ApiError(400, 'NAME_INVALID', 'Enter a name up to 120 characters.');
   const contact = normalizeContact(rawContact);
   const passwordHash = await hashPassword(password);
   if (!['en', 'hi', 'ml', 'ta'].includes(preferredLanguage)) {
     throw new ApiError(400, 'LANGUAGE_INVALID', 'Select an available interface language.');
+  }
+  if (!['mother', 'father', 'guardian'].includes(membershipCategory)) {
+    throw new ApiError(400, 'MEMBERSHIP_CATEGORY_INVALID', 'Select mother, father, or guardian membership.');
   }
   if (!verifier.available) throw verificationUnavailable();
 
@@ -61,6 +78,9 @@ export async function registerParent(req: Request, res: Response): Promise<void>
           contactType: contact.type,
           passwordHash,
           preferredLanguage: preferredLanguage as LanguageCode,
+          membershipCategory,
+          membershipId: generateMembershipId(),
+          membershipStatus: 'pending_verification',
           verificationStatus: 'pending',
           accountStatus: 'active',
         }], { session: dbSession });
@@ -113,15 +133,16 @@ export async function completeVerification(req: Request, res: Response): Promise
     await dbSession.withTransaction(async () => {
       await IdentityChallenge.updateOne({ _id: candidate._id, consumedAt: { $exists: false } }, { $set: { consumedAt: now } }, { session: dbSession });
       await ParentAccount.updateOne({ _id: parent._id, verificationStatus: 'pending' },
-        { $set: { verificationStatus: 'verified', verifiedAt: now } }, { session: dbSession });
+        { $set: { verificationStatus: 'verified', verifiedAt: now, membershipStatus: 'active' } }, { session: dbSession });
       await appendAudit({ actorId: String(parent._id), eventType: 'parent.account_verified', requestId: req.nteRequestId ?? '' }, dbSession);
+      await appendAudit({ actorId: String(parent._id), eventType: 'membership.activated', requestId: req.nteRequestId ?? '', details: { membershipId: parent.membershipId ?? null, category: parent.membershipCategory ?? 'guardian' } }, dbSession);
     });
   } finally { await dbSession.endSession(); }
   res.status(204).end();
 }
 
 export async function signIn(req: Request, res: Response): Promise<void> {
-  const parent = await verifyCredentials(req.body?.contact, req.body?.password);
+  const parent = await ensureMembershipId(await verifyCredentials(req.body?.contact, req.body?.password));
   const tokens = await createSession(String(parent._id), parent.sessionVersion);
   res.json({ parent: parentPublicRecord(parent), ...tokens, tokenType: 'Bearer' });
 }
@@ -141,7 +162,7 @@ export async function currentParent(req: Request, res: Response): Promise<void> 
   if (!req.nteAuth) throw unauthorized();
   const parent = await ParentAccount.findById(req.nteAuth.parentId);
   if (!parent) throw unauthorized();
-  res.json({ parent: parentPublicRecord(parent) });
+  res.json({ parent: parentPublicRecord(await ensureMembershipId(parent)) });
 }
 
 export async function updatePreferredLanguage(req: Request, res: Response): Promise<void> {
@@ -163,6 +184,31 @@ export async function updatePreferredLanguage(req: Request, res: Response): Prom
     details: { preferredLanguage: String(language) },
   });
   res.json({ preferredLanguage: parent.preferredLanguage });
+}
+
+export async function updateProfile(req: Request, res: Response): Promise<void> {
+  if (!req.nteAuth) throw unauthorized();
+  if (Object.keys(req.body ?? {}).some((field) => !['name', 'membershipCategory'].includes(field))) {
+    throw new ApiError(400, 'PROFILE_FIELD_UNSUPPORTED', 'Only the name and membership experience can be changed here. Contact and photo changes require approved verification and storage services.');
+  }
+  const update: Record<string, string> = {};
+  if (req.body?.name !== undefined) {
+    if (typeof req.body.name !== 'string' || !req.body.name.trim() || req.body.name.trim().length > 120) {
+      throw new ApiError(400, 'NAME_INVALID', 'Enter a name up to 120 characters.');
+    }
+    update.name = req.body.name.trim();
+  }
+  if (req.body?.membershipCategory !== undefined) {
+    if (!['mother', 'father', 'guardian'].includes(req.body.membershipCategory)) {
+      throw new ApiError(400, 'MEMBERSHIP_CATEGORY_INVALID', 'Select mother, father, or guardian membership.');
+    }
+    update.membershipCategory = req.body.membershipCategory;
+  }
+  if (Object.keys(update).length === 0) throw new ApiError(400, 'NO_CHANGES', 'Provide a profile field to update.');
+  const parent = await ParentAccount.findByIdAndUpdate(req.nteAuth.parentId, { $set: update }, { new: true, runValidators: true });
+  if (!parent) throw unauthorized();
+  await appendAudit({ actorId: req.nteAuth.parentId, eventType: 'membership.profile_updated', requestId: req.nteAuth.requestId, details: { fields: Object.keys(update).join(',') } });
+  res.json({ parent: parentPublicRecord(await ensureMembershipId(parent)) });
 }
 
 export async function requestRecovery(_req: Request, _res: Response): Promise<void> {

@@ -15,6 +15,10 @@ abstract interface class LearningRepository {
   Future<LearningItem> getContent(String id, {String? studentProfileId});
   Future<PlaybackGrant> requestPlayback(String id, {String? studentProfileId});
   Future<Uri> requestThumbnail(String id, {String? studentProfileId});
+  Future<List<Map<String, dynamic>>> history({String? studentProfileId});
+  Future<List<Map<String, dynamic>>> bookmarks({String? studentProfileId});
+  Future<void> updateProgress(String contentId, String status, {String? studentProfileId});
+  Future<void> setBookmarked(String contentId, bool bookmarked, {String? studentProfileId});
 }
 
 class LearningApiRepository implements LearningRepository {
@@ -98,6 +102,34 @@ class LearningApiRepository implements LearningRepository {
     }
     return uri;
   });
+
+  @override
+  Future<List<Map<String, dynamic>>> history({String? studentProfileId}) => _request(() async {
+    final response = await client.dio.get<Map<String, dynamic>>('/learning/me/history', queryParameters: {if (studentProfileId != null) 'studentProfileId': studentProfileId});
+    final rows = response.data?['items'];
+    return rows is List ? rows.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList(growable: false) : const [];
+  });
+
+  @override
+  Future<List<Map<String, dynamic>>> bookmarks({String? studentProfileId}) => _request(() async {
+    final response = await client.dio.get<Map<String, dynamic>>('/learning/me/bookmarks', queryParameters: {if (studentProfileId != null) 'studentProfileId': studentProfileId});
+    final rows = response.data?['items'];
+    return rows is List ? rows.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList(growable: false) : const [];
+  });
+
+  @override
+  Future<void> updateProgress(String contentId, String status, {String? studentProfileId}) => _request(() async {
+    await client.dio.put<void>('/learning/content/${Uri.encodeComponent(contentId)}/progress', data: {'status': status, if (studentProfileId != null) 'studentProfileId': studentProfileId});
+  });
+
+  @override
+  Future<void> setBookmarked(String contentId, bool bookmarked, {String? studentProfileId}) => _request(() async {
+    if (bookmarked) {
+      await client.dio.post<void>('/learning/content/${Uri.encodeComponent(contentId)}/bookmark', data: {if (studentProfileId != null) 'studentProfileId': studentProfileId});
+    } else {
+      await client.dio.delete<void>('/learning/content/${Uri.encodeComponent(contentId)}/bookmark', queryParameters: {if (studentProfileId != null) 'studentProfileId': studentProfileId});
+    }
+  });
 }
 
 class UnconfiguredLearningRepository implements LearningRepository {
@@ -113,4 +145,8 @@ class UnconfiguredLearningRepository implements LearningRepository {
   Future<PlaybackGrant> requestPlayback(String id, {String? studentProfileId}) async => _unavailable();
   @override
   Future<Uri> requestThumbnail(String id, {String? studentProfileId}) async => _unavailable();
+  @override Future<List<Map<String, dynamic>>> history({String? studentProfileId}) async => _unavailable();
+  @override Future<List<Map<String, dynamic>>> bookmarks({String? studentProfileId}) async => _unavailable();
+  @override Future<void> updateProgress(String contentId, String status, {String? studentProfileId}) async => _unavailable();
+  @override Future<void> setBookmarked(String contentId, bool bookmarked, {String? studentProfileId}) async => _unavailable();
 }

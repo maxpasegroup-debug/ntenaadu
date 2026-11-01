@@ -3,15 +3,16 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 
+import '../design_system/nte_design_system.dart';
 import '../localization/languages.dart';
 import '../localization/locale_controller.dart';
 import 'learning_models.dart';
 import 'learning_repository.dart';
 
-const _forest = Color(0xFF263A30);
-const _green = Color(0xFF4C8B69);
-const _saffron = Color(0xFFF3A66B);
-const _ivory = Color(0xFFF6F3EC);
+const _forest = NteColors.forest;
+const _green = NteColors.green;
+const _saffron = NteColors.saffron;
+const _ivory = NteColors.ivory;
 
 class LearningSearchScreen extends StatelessWidget {
   const LearningSearchScreen({required this.locale, required this.repository, this.studentProfileId, this.initialQuery = '', super.key});
@@ -51,6 +52,7 @@ class _LearningLibraryTabState extends State<LearningLibraryTab> {
   List<LearningItem> _items = const [];
   List<LearningProgramme> _programmes = const [];
   List<String> _availableLanguages = const [];
+  List<Map<String, dynamic>> _history = const [], _bookmarks = const [];
   int _nextOffset = 0;
   bool _hasMore = false;
   bool _loadingMore = false;
@@ -103,6 +105,10 @@ class _LearningLibraryTabState extends State<LearningLibraryTab> {
         language: _contentLanguage,
         studentProfileId: widget.studentProfileId,
       );
+      final records = widget.searchOnly ? null : await Future.wait([
+        widget.repository.history(studentProfileId: widget.studentProfileId),
+        widget.repository.bookmarks(studentProfileId: widget.studentProfileId),
+      ]);
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _topics = topics;
@@ -110,6 +116,7 @@ class _LearningLibraryTabState extends State<LearningLibraryTab> {
         _items = catalog.items;
         _programmes = catalog.programmes;
         _availableLanguages = catalog.availableLanguages;
+        if (records != null) { _history = records[0]; _bookmarks = records[1]; }
         _nextOffset = catalog.nextOffset;
         _hasMore = catalog.hasMore;
         _failed = false;
@@ -169,7 +176,11 @@ class _LearningLibraryTabState extends State<LearningLibraryTab> {
           const SizedBox(height: 12),
           _filters(context),
           const SizedBox(height: 14),
-          if (!widget.searchOnly) _InfoPanel(icon: Icons.history, title: t('learning.historyUnavailableTitle'), body: t('learning.historyUnavailableBody')),
+          if (!widget.searchOnly) ...[
+            _LearningRecords(title: t('learning.historyTitle'), empty: t('learning.historyEmpty'), rows: _history, onOpen: _openRecord),
+            const SizedBox(height: 8),
+            _LearningRecords(title: t('learning.bookmarksTitle'), empty: t('learning.bookmarksEmpty'), rows: _bookmarks, onOpen: _openRecord),
+          ],
           const SizedBox(height: 10),
           Text(hasQuery ? t('learning.searchResults') : t('learning.libraryResults'), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
         ]))),
@@ -228,6 +239,12 @@ class _LearningLibraryTabState extends State<LearningLibraryTab> {
     } catch (_) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(widget.locale.text('learning.loadMoreFailed'))));
     } finally { if (mounted) setState(() => _loadingMore = false); }
+  }
+
+  void _openRecord(Map<String, dynamic> row) {
+    final id = row['id']?.toString();
+    if (id == null || id.isEmpty) return;
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => LearningContentDetailScreen(contentId: id, locale: widget.locale, repository: widget.repository, studentProfileId: widget.studentProfileId, onOpenProgrammes: widget.onOpenProgrammes)));
   }
 
   Widget _filters(BuildContext context) {
@@ -310,6 +327,7 @@ class _LearningContentDetailScreenState extends State<LearningContentDetailScree
   LearningItem? _item;
   bool _loading = true;
   String? _errorKey;
+  bool _busy = false;
 
   @override
   void initState() { super.initState(); _load(); }
@@ -363,6 +381,16 @@ class _LearningContentDetailScreenState extends State<LearningContentDetailScree
       if (item.topics.isNotEmpty) ...[const SizedBox(height: 4), Text('${t('learning.topics')}: ${item.topics.map((topic) => topic.name).join(', ')}')],
       const SizedBox(height: 14),
       Text(item.description, style: Theme.of(context).textTheme.bodyLarge?.copyWith(height: 1.5)),
+      if (item.mediaType == LearningMediaType.reading && canUseFreeItem && item.mediaAvailable) ...[
+        const SizedBox(height: 14),
+        Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)), child: SelectableText(item.readingBody ?? '', style: Theme.of(context).textTheme.bodyLarge?.copyWith(height: 1.7))),
+      ],
+      const SizedBox(height: 8),
+      Wrap(spacing: 8, children: [
+        OutlinedButton.icon(onPressed: _busy || paidUnavailable ? null : () => _setBookmark(item), icon: Icon(item.bookmarked ? Icons.bookmark : Icons.bookmark_border), label: Text(t(item.bookmarked ? 'learning.removeBookmark' : 'learning.bookmark'))),
+        if (canUseFreeItem && item.mediaAvailable)
+          FilledButton.tonalIcon(onPressed: _busy ? null : () => _markRead(item), icon: const Icon(Icons.check_circle_outline), label: Text(t('learning.markComplete'))),
+      ]),
       const SizedBox(height: 14),
       _AccessChip(label: t(paidUnavailable ? 'learning.accessRestricted' : 'learning.accessFree'), restricted: paidUnavailable),
       if (paidUnavailable) ...[
@@ -383,10 +411,32 @@ class _LearningContentDetailScreenState extends State<LearningContentDetailScree
           onPressed: canUseFreeItem && item.mediaAvailable ? () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => AudioPlayerScreen(item: item, locale: widget.locale, repository: widget.repository, studentProfileId: widget.studentProfileId))) : null,
           icon: const Icon(Icons.play_arrow), label: Text(t(item.mediaAvailable ? 'learning.openAudioPlayer' : 'learning.audioUnavailable')),
         )
-      else
+      else if (item.mediaType == LearningMediaType.video)
         _InfoPanel(icon: Icons.videocam_off_outlined, title: t('learning.videoUnavailableTitle'), body: t('learning.videoUnavailableBody')),
     ]);
   }
+
+  Future<void> _setBookmark(LearningItem item) async {
+    setState(() => _busy = true);
+    try { await widget.repository.setBookmarked(item.id, !item.bookmarked, studentProfileId: widget.studentProfileId); await _load(); }
+    catch (_) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(widget.locale.text('learning.actionFailed')))); }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _markRead(LearningItem item) async {
+    setState(() => _busy = true);
+    try { await widget.repository.updateProgress(item.id, 'completed', studentProfileId: widget.studentProfileId); if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(widget.locale.text('learning.completedSaved')))); }
+    catch (_) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(widget.locale.text('learning.actionFailed')))); }
+    if (mounted) setState(() => _busy = false);
+  }
+}
+
+class _LearningRecords extends StatelessWidget {
+  const _LearningRecords({required this.title, required this.empty, required this.rows, required this.onOpen});
+  final String title, empty;
+  final List<Map<String, dynamic>> rows;
+  final ValueChanged<Map<String, dynamic>> onOpen;
+  @override Widget build(BuildContext context) => Card(color: Colors.white, child: ExpansionTile(title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700, color: _forest)), children: rows.isEmpty ? [Padding(padding: const EdgeInsets.all(14), child: Text(empty))] : rows.take(5).map((row) => ListTile(title: Text('${row['title'] ?? ''}', maxLines: 1, overflow: TextOverflow.ellipsis), subtitle: Text('${row['status'] ?? row['contentLanguage'] ?? ''}'), trailing: const Icon(Icons.chevron_right), onTap: () => onOpen(row))).toList()));
 }
 
 class _Thumbnail extends StatefulWidget {

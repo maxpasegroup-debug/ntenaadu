@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import type { Request, Response } from 'express';
 import { ApiError, badRequest, notFound, unauthorized, unavailable } from '../errors';
-import { AuditEvent, ConsentEvent, ConsentPolicy, Family, GuardianRelationship, StudentProfile } from '../models';
+import { AuditEvent, ConsentEvent, ConsentPolicy, Family, FamilyGuardian, GuardianRelationship, StudentProfile } from '../models';
 import { appendAudit } from '../services/audit';
 import { DatabaseConsentPolicyProvider } from '../services/consent-policy';
 import type { AgeGroup, LanguageCode } from '../types';
@@ -43,9 +43,20 @@ async function ownedFamily(parentId: string, session?: mongoose.ClientSession) {
 
 export async function listStudents(req: Request, res: Response): Promise<void> {
   const current = auth(req);
-  const family = await ownedFamily(current.parentId);
-  const students = await StudentProfile.find({ familyId: family._id, status: { $ne: 'archived' } }).sort({ createdAt: 1 });
-  const relationships = await GuardianRelationship.find({ familyId: family._id, guardianId: current.parentId });
+  let family = await Family.findOne({ guardianId: current.parentId, status: 'active' });
+  if (!family) {
+    const link = await FamilyGuardian.findOne({ guardianId: current.parentId, status: 'active', permissions: 'view_students' });
+    if (link) family = await Family.findOne({ _id: link.familyId, status: 'active' });
+  }
+  if (!family) throw notFound();
+  const isOwner = String(family.guardianId) === current.parentId;
+  const ownerConsentedStudentIds = isOwner ? null : await GuardianRelationship.find({
+    familyId: family._id, guardianId: family.guardianId, relationshipStatus: 'active', consentStatus: 'granted',
+  }).distinct('studentId');
+  const studentFilter: Record<string, unknown> = { familyId: family._id, status: isOwner ? { $ne: 'archived' } : 'active' };
+  if (ownerConsentedStudentIds) studentFilter._id = { $in: ownerConsentedStudentIds };
+  const students = await StudentProfile.find(studentFilter).sort({ createdAt: 1 });
+  const relationships = await GuardianRelationship.find({ familyId: family._id, guardianId: current.parentId, relationshipStatus: { $ne: 'archived' } });
   const byStudent = new Map(relationships.map((relationship) => [String(relationship.studentId), relationship] as const));
   res.json({ familyId: String(family._id), students: students.flatMap((student) => {
     const relationship = byStudent.get(String(student._id));
@@ -82,6 +93,17 @@ export async function createStudent(req: Request, res: Response): Promise<void> 
         relationshipStatus: 'pending_consent',
         consentStatus: 'not_recorded',
       }], { session });
+      const connectedGuardians = await FamilyGuardian.find({ familyId: family._id, status: 'active', permissions: 'view_students' }).session(session).select('guardianId');
+      if (connectedGuardians.length) {
+        await GuardianRelationship.create(connectedGuardians.map((link: { guardianId: unknown }) => ({
+          familyId: family._id,
+          guardianId: link.guardianId,
+          studentId: student._id,
+          relationshipType: 'guardian',
+          relationshipStatus: 'pending_consent',
+          consentStatus: 'not_recorded',
+        })), { session });
+      }
       await appendAudit({
         actorId: current.parentId,
         familyId: String(family._id),

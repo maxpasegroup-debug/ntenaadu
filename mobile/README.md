@@ -3,6 +3,19 @@
 This is an isolated NTE Naadu Flutter app surface. It does not change the HappiNotes
 Flutter app, identifiers, backend, or deployment configuration.
 
+## Design system
+
+The shared mobile palette, spacing, corner radii, content widths, and Material
+theme live in `lib/design_system/nte_design_system.dart`. Use `NteColors`,
+`NteSpacing`, `NteRadii`, and `NteLayout` instead of adding repeated visual
+constants to screens. The app root applies `NteTheme.light()`.
+
+The theme uses the approved saffron, white, green, ivory, and deep forest
+palette. Content width tokens are 640 px for general mobile content, 560 px for
+onboarding, and 900 px for admin layouts. New screens should keep text
+localization-ready, allow longer translations to wrap, and remain usable with
+larger accessibility text.
+
 ## Android release foundation
 
 The Android project is under `android/`, with separate staging and production
@@ -48,6 +61,16 @@ response. Consent appears only after fetching an exact-language published policy
 and is recorded/revoked only after server confirmation. Passwords are cleared
 after submission. No endpoint or client state simulates a successful account,
 verification, recovery, or consent result.
+
+Registration carries a self-selected Mother, Father, or parent/guardian
+membership experience. The account API can return an NTE membership number and
+status; the number is not identity or legal-authority verification. The API
+repository has typed contracts for guardian listings and one-time connected-
+family invitations. Accepted connections have read-only student-profile access
+and do not copy consent. The family screen supports manual token sharing,
+accept/reject, cancellation, revocation, and access-dispute reports. No email/SMS
+provider is configured; the administrator dispute review is API-only and has no
+mobile console screen.
 
 ## Dashboards
 
@@ -162,3 +185,8 @@ manager role is assigned out of band, with no self-service role assignment.
 New Phase 6 UI strings are in `assets/l10n/en.json`. Hindi, Malayalam, and Tamil
 use the existing English fallback for untranslated event copy. No complete
 event translation pack is claimed.
+# Phase 4 learning UI
+
+The learning library now includes authenticated history and saved items, reading-content display, manual progress recording, programme activity response submission, ALTT stage labels, and private reviewer feedback. New labels are in `assets/l10n/en.json`; Hindi, Malayalam and Tamil continue using the established English fallback for strings without reviewed translations. Learning-content language remains distinct from interface language. No sample courses or fake progress are shown.
+
+The current Flutter learning app uses guardian-managed student profiles; a standalone child login is not added. Activity responses are text-only and capped at 4,000 characters. Audio/video completion remains user-recorded rather than playback-verified, while growth recognition is awarded by the server after completion of non-growth activities. Paid programmes, uploads, live sessions, and verified event participation remain unavailable in this phase.

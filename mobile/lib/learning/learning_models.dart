@@ -1,5 +1,5 @@
 enum LearningAccessStatus { available, entitlementUnavailable, restricted }
-enum LearningMediaType { audio, video }
+enum LearningMediaType { audio, video, reading }
 
 class LearningTopic {
   const LearningTopic({required this.id, required this.name});
@@ -35,6 +35,8 @@ class LearningItem {
     this.durationSeconds,
     this.programmeId,
     this.programmeName,
+    this.readingBody,
+    this.bookmarked = false,
   });
 
   final String id;
@@ -55,6 +57,8 @@ class LearningItem {
   final int? durationSeconds;
   final String? programmeId;
   final String? programmeName;
+  final String? readingBody;
+  final bool bookmarked;
 
   factory LearningItem.fromJson(Map<String, dynamic> json) {
     List<String> strings(Object? value) => value is List ? value.whereType<String>().toList(growable: false) : const [];
@@ -75,7 +79,7 @@ class LearningItem {
       description: json['description']?.toString() ?? '',
       contentLanguage: json['contentLanguage']?.toString() ?? 'en',
       availableLanguages: strings(json['availableLanguages']),
-      mediaType: json['mediaType'] == 'video' ? LearningMediaType.video : LearningMediaType.audio,
+      mediaType: json['mediaType'] == 'reading' ? LearningMediaType.reading : json['mediaType'] == 'video' ? LearningMediaType.video : LearningMediaType.audio,
       topicIds: strings(json['topicIds']),
       topics: topics,
       ageBands: strings(json['ageBands']),
@@ -87,6 +91,8 @@ class LearningItem {
       durationSeconds: json['durationSeconds'] is num ? (json['durationSeconds'] as num).toInt() : null,
       programmeId: json['programmeId']?.toString(),
       programmeName: json['programmeName']?.toString(),
+      readingBody: json['readingBody']?.toString(),
+      bookmarked: json['bookmarked'] == true,
     );
   }
 

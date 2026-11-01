@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import '../design_system/nte_design_system.dart';
 import '../localization/language_picker.dart';
 import '../localization/locale_controller.dart';
 import '../onboarding/onboarding_session.dart';
@@ -6,7 +7,7 @@ import '../clubs/club_screens.dart';
 import '../events/event_screens.dart';
 import '../admin/admin_repository.dart';
 
-const _forest = Color(0xFF263A30), _green = Color(0xFF4C8B69), _saffron = Color(0xFFF3A66B), _ivory = Color(0xFFF6F3EC);
+const _forest = NteColors.forest, _green = NteColors.green, _saffron = NteColors.saffron, _ivory = NteColors.ivory;
 
 class AdminConsoleScreen extends StatefulWidget {
   const AdminConsoleScreen({required this.locale, required this.session, super.key});
@@ -23,6 +24,7 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
   List<_AdminSection> get sections => [
     _AdminSection('admin.overview', Icons.dashboard_outlined, _overview),
     if (roles.contains('platform_admin')) _AdminSection('admin.members', Icons.people_outline, _members),
+    if (roles.contains('platform_admin')) _AdminSection('admin.communities', Icons.public, _communities),
     if (roles.contains('club_reviewer') || roles.contains('club_moderator')) _AdminSection('admin.clubs', Icons.groups_outlined, _clubs),
     if (roles.contains('event_manager')) _AdminSection('admin.events', Icons.event_outlined, _events),
     if (roles.contains('content_editor') || roles.contains('content_reviewer')) _AdminSection('admin.content', Icons.menu_book_outlined, _content),
@@ -43,7 +45,8 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
   Widget _safeguarding() => _SafeguardingQueue(locale: widget.locale, repo: repo!, accountId: widget.session.account?.id ?? '', canManage: roles.contains('safeguarding_lead'));
   Widget _audit() => _RemoteList(load: (filter) async { final p = filter.split('|'); return (await repo!.audit(eventType: p.isNotEmpty ? p[0] : '', actorId: p.length > 1 ? p[1] : '', from: p.length > 2 ? p[2] : '', to: p.length > 3 ? p[3] : '', offset: p.length > 4 ? int.tryParse(p[4]) ?? 0 : 0)).map((e) => _RowData('${e['eventType']}', '${e['occurredAt'] ?? ''}\n${e['requestId'] ?? ''}')).toList(); }, title: t('admin.audit'), text: t('admin.auditHelp'), locale: widget.locale, searchable: true);
   Widget _content() => _ContentPage(locale: widget.locale, repo: repo!, roleSet: roles);
-  Widget _clubs() => ClubLandingTab(locale: widget.locale, repository: widget.session.clubRepository, students: widget.session.serverStudents, eventRepository: widget.session.eventRepository, onReportConcern: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => SafeguardingReportScreen(locale: widget.locale, repository: repo!))));
+  Widget _clubs() => ClubLandingTab(locale: widget.locale, repository: widget.session.clubRepository, communityRepository: widget.session.communityRepository, students: widget.session.serverStudents, eventRepository: widget.session.eventRepository, onReportConcern: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => SafeguardingReportScreen(locale: widget.locale, repository: repo!))));
+  Widget _communities() => _CommunityAdminPage(locale: widget.locale, repo: repo!);
   Widget _events() => EventsScreen(locale: widget.locale, repository: widget.session.eventRepository, students: widget.session.serverStudents, onReportConcern: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => SafeguardingReportScreen(locale: widget.locale, repository: repo!))));
   Widget _finance() => _FinancePage(locale: widget.locale, repo: repo!);
   Widget _state(String title, String body) => Center(child: Padding(padding: const EdgeInsets.all(24), child: Card(color: Colors.white, child: Padding(padding: const EdgeInsets.all(20), child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.lock_outline, color: _green, size: 34), const SizedBox(height: 12), Text(title, style: const TextStyle(fontWeight: FontWeight.bold, color: _forest)), const SizedBox(height: 8), Text(body, textAlign: TextAlign.center)])))));
@@ -100,21 +103,83 @@ class _SafeguardingDetailsState extends State<_SafeguardingDetails> {
   }
 }
 
+class _CommunityAdminPage extends StatefulWidget {
+  const _CommunityAdminPage({required this.locale,required this.repo});
+  final LocaleController locale; final AdminRepository repo;
+  @override State<_CommunityAdminPage> createState()=>_CommunityAdminPageState();
+}
+class _CommunityAdminPageState extends State<_CommunityAdminPage> {
+  List<Map<String,dynamic>> _nodes=[],_members=[],_audit=[]; bool _loading=true,_failed=false;
+  String t(String key)=>widget.locale.text(key);
+  @override void initState(){super.initState();_load();}
+  Future<void> _load() async { setState(()=>_loading=true); try { final r=await Future.wait([widget.repo.communities(),widget.repo.communityMemberships(),widget.repo.communityAudit()]); if(mounted)setState((){_nodes=r[0];_members=r[1];_audit=r[2];_loading=false;_failed=false;}); } catch(_){if(mounted)setState((){_loading=false;_failed=true;});} }
+  Future<void> _create() async {
+    final code=TextEditingController(),name=TextEditingController(),locality=TextEditingController(); String level='national',parent='',audience='all';
+    final levels=['national','state','district','local'];
+    final result=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,update){
+      final index=levels.indexOf(level); final parents=index<=0?const <Map<String,dynamic>>[]:_nodes.where((n)=>n['level']==levels[index-1]&&n['status']=='approved').toList();
+      if(!parents.any((p)=>p['id']==parent))parent='';
+      return AlertDialog(title:Text(t('community.admin.create')),content:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
+        DropdownButtonFormField<String>(value:level,decoration:InputDecoration(labelText:t('community.level')),items:levels.map((v)=>DropdownMenuItem(value:v,child:Text(t('community.level.'+v)))).toList(),onChanged:(v)=>update((){level=v??level;parent='';})),
+        if(index>0)DropdownButtonFormField<String>(value:parent.isEmpty?null:parent,decoration:InputDecoration(labelText:t('community.admin.parent')),items:parents.map((p)=>DropdownMenuItem(value:p['id'] as String,child:Text(p['name'] as String))).toList(),onChanged:(v)=>update(()=>parent=v??'')),
+        DropdownButtonFormField<String>(value:audience,decoration:InputDecoration(labelText:t('community.admin.audience')),items:['all','families','mothers','fathers','students'].map((v)=>DropdownMenuItem(value:v,child:Text(t('community.audience.'+v)))).toList(),onChanged:(v)=>update(()=>audience=v??audience)),
+        TextField(controller:code,decoration:InputDecoration(labelText:t('community.admin.code'))),TextField(controller:name,decoration:InputDecoration(labelText:t('community.admin.name'))),TextField(controller:locality,decoration:InputDecoration(labelText:t('community.admin.locality')))
+      ])),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:Text(t('action.cancel'))),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:Text(t('community.admin.create')))]);
+    }));
+    if(result!=true)return;
+    try{await widget.repo.createCommunity(level:level,audience:audience,code:code.text.trim(),name:name.text.trim(),parentCommunityId:parent,localityLabel:locality.text.trim());await _load();}
+    catch(_){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(t('admin.actionFailed'))));}
+  }
+  Future<void> _appoint(Map<String,dynamic> membership) async {
+    Map<String,dynamic>? node; for(final item in _nodes){if(item['id']==membership['communityId'])node=item;} final level=node?['level']; final roleOptions=['community_leader','community_moderator','approved_trainer','approved_mentor',if(level=='state')'state_leader',if(level=='district')'district_leader'];
+    String role='community_leader'; final reason=TextEditingController();
+    final result=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,update)=>AlertDialog(title:Text(t('community.admin.appoint')),content:Column(mainAxisSize:MainAxisSize.min,children:[
+      DropdownButtonFormField<String>(value:role,decoration:InputDecoration(labelText:t('community.admin.role')),items:roleOptions.map((v)=>DropdownMenuItem(value:v,child:Text(t('community.role.'+v)))).toList(),onChanged:(v)=>update(()=>role=v??role)),
+      TextField(controller:reason,minLines:2,maxLines:4,decoration:InputDecoration(labelText:t('admin.reason')))
+    ]),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:Text(t('action.cancel'))),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:Text(t('community.admin.appoint')))])));
+    if(result!=true)return;
+    try{await widget.repo.appointCommunityRole(membership['communityId'] as String,membership['accountId'] as String,role,reason.text.trim());await _load();}
+    catch(_){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(t('admin.actionFailed'))));}
+  }
+  Future<void> _decideMembership(Map<String,dynamic> m,String decision) async {try{await widget.repo.decideCommunityMembership(m['communityId'] as String,m['id'] as String,decision);await _load();}catch(_){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(t('admin.actionFailed'))));}}
+  Future<void> _membershipStatus(Map<String,dynamic> m)async{final reason=TextEditingController();final next=m['status']=='active'?'suspended':'active';final yes=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(title:Text(t('community.admin.membershipStatus')),content:TextField(controller:reason,minLines:2,maxLines:4,decoration:InputDecoration(labelText:t('admin.reason'))),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:Text(t('action.cancel'))),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:Text(t('community.status.$next')))]));if(yes!=true)return;try{await widget.repo.setCommunityMembershipStatus(m['id'] as String,next,reason.text.trim());await _load();}catch(_){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(t('admin.actionFailed'))));}}
+  @override Widget build(BuildContext context)=>RefreshIndicator(onRefresh:_load,child:ListView(padding:const EdgeInsets.all(16),children:[
+    Text(t('admin.communities'),style:Theme.of(context).textTheme.headlineSmall?.copyWith(color:_forest,fontWeight:FontWeight.bold)),Text(t('community.admin.help')),
+    FilledButton.icon(onPressed:_create,icon:const Icon(Icons.add),label:Text(t('community.admin.create'))),
+    if(_loading)const Center(child:CircularProgressIndicator()) else if(_failed)TextButton(onPressed:_load,child:Text(t('admin.loadFailed'))) else ...[
+      Text(t('community.admin.tree'),style:Theme.of(context).textTheme.titleLarge),
+      if(_nodes.isEmpty)Text(t('admin.empty')),
+      ..._nodes.map((n)=>Card(color:Colors.white,child:ListTile(leading:Icon(n['status']=='approved'?Icons.public:Icons.pending_outlined,color:_green),title:Text(t('community.level.'+(n['level'] as String))+' · '+(n['name'] as String)),subtitle:Text((n['code'] as String)+' · '+(n['status'] as String)+' · '+((n['localityLabel']??'') as String)),trailing:n['status']=='draft'?TextButton(onPressed:()async{try{await widget.repo.approveCommunity(n['id'] as String);await _load();}catch(_){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(t('admin.actionFailed'))));}},child:Text(t('community.admin.approve'))):null))),
+      const SizedBox(height:16),Text(t('community.admin.members'),style:Theme.of(context).textTheme.titleLarge),
+      if(_members.isEmpty)Text(t('admin.empty')),
+      ..._members.map((m)=>Card(color:Colors.white,child:ListTile(title:Text((m['membershipCategory'] as String)+' · '+(m['status'] as String)),subtitle:Text((m['membershipCategory']=='student'?t('community.admin.studentPrivate'):m['accountId'] as String)+' · '+(m['communityId'] as String)),trailing:m['status']=='pending_review'?Wrap(mainAxisSize:MainAxisSize.min,children:[IconButton(tooltip:t('community.admin.reject'),onPressed:()=>_decideMembership(m,'reject'),icon:const Icon(Icons.close)),IconButton(tooltip:t('community.admin.approve'),onPressed:()=>_decideMembership(m,'approve'),icon:const Icon(Icons.check))]):m['status']=='active'&&m['membershipCategory']!='student'?Wrap(mainAxisSize:MainAxisSize.min,children:[IconButton(tooltip:t('community.admin.appoint'),onPressed:()=>_appoint(m),icon:const Icon(Icons.assignment_ind_outlined)),IconButton(tooltip:t('community.admin.membershipStatus'),onPressed:()=>_membershipStatus(m),icon:const Icon(Icons.block_outlined))]):m['status']=='active'||m['status']=='suspended'?IconButton(tooltip:t('community.admin.membershipStatus'),onPressed:()=>_membershipStatus(m),icon:const Icon(Icons.block_outlined)):null))),
+      const SizedBox(height:16),Text(t('community.admin.audit'),style:Theme.of(context).textTheme.titleLarge),
+      ..._audit.take(30).map((e)=>ListTile(dense:true,title:Text(e['eventType'] as String),subtitle:Text(e['occurredAt'].toString())))
+    ]
+  ]));
+}
+
 class _ContentPage extends StatefulWidget { const _ContentPage({required this.locale, required this.repo, required this.roleSet}); final LocaleController locale; final AdminRepository repo; final Set<String> roleSet; @override State<_ContentPage> createState() => _ContentPageState(); }
 class _ContentPageState extends State<_ContentPage> {
-  List<Map<String,dynamic>> _items = [], _programmes = [], _topics = []; bool _busy = true, _failed = false; String t(String k) => widget.locale.text(k);
+  List<Map<String,dynamic>> _items = [], _programmes = [], _topics = [], _submissions = []; bool _busy = true, _failed = false; String t(String k) => widget.locale.text(k);
   @override void initState() { super.initState(); _load(); }
-  Future<void> _load() async { setState(() { _busy = true; _failed = false; }); try { final values = await Future.wait([widget.repo.contentItems(), widget.repo.programmes(), widget.repo.topics()]); if (mounted) setState(() { _items = values[0]; _programmes = values[1]; _topics = values[2]; _busy = false; }); } catch (_) { if (mounted) setState(() { _failed = true; _busy = false; }); } }
+  Future<void> _load() async { setState(() { _busy = true; _failed = false; }); try { final values = await Future.wait([widget.repo.contentItems(), widget.repo.programmes(), widget.repo.topics(), if (widget.roleSet.contains('content_reviewer')) widget.repo.programmeSubmissions()]); if (mounted) setState(() { _items = values[0]; _programmes = values[1]; _topics = values[2]; _submissions = values.length > 3 ? values[3] : []; _busy = false; }); } catch (_) { if (mounted) setState(() { _failed = true; _busy = false; }); } }
   String _slug(String value) => value.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9]+'), '-').replaceAll(RegExp(r'^-|-$'), '');
   Future<void> _author(String kind, {String? programmeId}) async {
     final id = TextEditingController();
     final title = TextEditingController();
     final description = TextEditingController();
     final asset = TextEditingController();
+    final readingBody = TextEditingController();
+    final contentGroup = TextEditingController();
     final bands = <String>{'child', 'youth'};
     var language = 'en';
     var mediaType = 'audio';
     var access = 'free';
+    var activityStage = 'learn';
+    var activityType = 'lesson';
+    var responseRequired = false;
+    var requiresReview = false;
 
     final saved = await showDialog<bool>(
       context: context,
@@ -132,8 +197,10 @@ class _ContentPageState extends State<_ContentPage> {
                     decoration: InputDecoration(labelText: t('admin.identifier')),
                     onChanged: (value) {
                       if (title.text.isEmpty) title.text = value.replaceAll('-', ' ');
+                      if (contentGroup.text.isEmpty) contentGroup.text = value;
                     },
                   ),
+                  if (kind == 'content') TextField(controller: contentGroup, decoration: InputDecoration(labelText: t('admin.contentGroup'))),
                   TextField(controller: title, decoration: InputDecoration(labelText: t('admin.titleField'))),
                   TextField(controller: description, minLines: 2, maxLines: 4, decoration: InputDecoration(labelText: t('admin.descriptionField'))),
                   DropdownButtonFormField<String>(
@@ -146,16 +213,23 @@ class _ContentPageState extends State<_ContentPage> {
                     DropdownButtonFormField<String>(
                       value: mediaType,
                       decoration: InputDecoration(labelText: t('admin.mediaType')),
-                      items: ['audio', 'video'].map((value) => DropdownMenuItem(value: value, child: Text(value))).toList(),
+                      items: ['audio', 'video', 'reading'].map((value) => DropdownMenuItem(value: value, child: Text(value))).toList(),
                       onChanged: (value) => update(() => mediaType = value ?? 'audio'),
                     ),
-                    TextField(controller: asset, decoration: InputDecoration(labelText: t('admin.assetKey'))),
+                    if (mediaType == 'reading') TextField(controller: readingBody, minLines: 5, maxLines: 10, maxLength: 20000, decoration: InputDecoration(labelText: t('admin.readingBody')))
+                    else TextField(controller: asset, decoration: InputDecoration(labelText: t('admin.assetKey'))),
                     DropdownButtonFormField<String>(
                       value: access,
                       decoration: InputDecoration(labelText: t('admin.access')),
                       items: ['free', 'paid'].map((value) => DropdownMenuItem(value: value, child: Text(value))).toList(),
                       onChanged: (value) => update(() => access = value ?? 'free'),
                     ),
+                  ],
+                  if (kind == 'activity') ...[
+                    DropdownButtonFormField<String>(value: activityStage, decoration: InputDecoration(labelText: t('admin.alttStage')), items: ['learn','practise','participate','take_action','reflect','grow'].map((value) => DropdownMenuItem(value: value, child: Text(t('programme.stage.$value')))).toList(), onChanged: (value) => update(() { activityStage = value ?? 'learn'; activityType = const {'learn':'lesson','practise':'assignment','participate':'participation','take_action':'action','reflect':'reflection','grow':'recognition'}[activityStage]!; responseRequired = ['practise','participate','take_action','reflect'].contains(activityStage); })) ,
+                    DropdownButtonFormField<String>(value: activityType, decoration: InputDecoration(labelText: t('admin.activityType')), items: ['lesson','practice','assignment','participation','action','reflection','recognition'].map((value) => DropdownMenuItem(value: value, child: Text(t('admin.activityType.$value')))).toList(), onChanged: (value) => update(() { activityType = value ?? 'lesson'; activityStage = const {'lesson':'learn','practice':'practise','assignment':'practise','participation':'participate','action':'take_action','reflection':'reflect','recognition':'grow'}[activityType]!; responseRequired = ['practice','assignment','participation','action','reflection'].contains(activityType); })) ,
+                    SwitchListTile(value: responseRequired, title: Text(t('admin.responseRequired')), onChanged: ['practice','assignment','reflection'].contains(activityType) ? null : (value) => update(() { responseRequired = value; if (!value) requiresReview = false; })),
+                    SwitchListTile(value: requiresReview, title: Text(t('admin.trainerReview')), onChanged: (value) => update(() { requiresReview = value; if (value) responseRequired = true; })),
                   ],
                   if (kind == 'programme')
                     Padding(
@@ -192,8 +266,8 @@ class _ContentPageState extends State<_ContentPage> {
     try {
       if (kind == 'topic') await widget.repo.createTopic(itemId, title.text.trim());
       if (kind == 'content') await widget.repo.createContent({
-        'contentId': itemId, 'contentGroupId': itemId, 'title': title.text.trim(), 'description': description.text.trim(),
-        'contentLanguage': language, 'mediaType': mediaType, 'mediaAssetKey': asset.text.trim(), 'ageBands': bands.toList(),
+        'contentId': itemId, 'contentGroupId': _slug(contentGroup.text.isEmpty ? itemId : contentGroup.text), 'title': title.text.trim(), 'description': description.text.trim(),
+        'contentLanguage': language, 'mediaType': mediaType, if (mediaType == 'reading') 'readingBody': readingBody.text.trim() else 'mediaAssetKey': asset.text.trim(), 'ageBands': bands.toList(),
         'accessRequirement': access, 'topicIds': [], 'learningObjectives': [],
       });
       if (kind == 'programme') await widget.repo.createProgramme({
@@ -205,7 +279,7 @@ class _ContentPageState extends State<_ContentPage> {
       });
       if (kind == 'activity' && programmeId != null) await widget.repo.createActivity(programmeId, {
         'activityId': itemId, 'title': title.text.trim(), 'description': description.text.trim(),
-        'contentLanguage': language, 'ageBands': bands.toList(),
+        'contentLanguage': language, 'ageBands': bands.toList(), 'stage': activityStage, 'activityType': activityType, 'responseRequired': responseRequired, 'requiresReview': requiresReview,
       });
       await _load();
     } catch (_) {
@@ -214,10 +288,11 @@ class _ContentPageState extends State<_ContentPage> {
   }
   Future<void> _change(Map<String,dynamic> item, bool programme, String status) async { final reason = TextEditingController(); final yes = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(title: Text(t('admin.publicationReason')), content: TextField(controller: reason, minLines: 2, maxLines: 4, decoration: InputDecoration(labelText: t('admin.reason'))), actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(t('action.cancel'))), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(t('action.save')))])); if (yes != true || reason.text.trim().length < 5) return; try { if (programme) await widget.repo.setProgrammeStatus('${item['id']}', status, reason.text.trim()); else await widget.repo.setContentStatus('${item['id']}', status, reason.text.trim()); await _load(); } catch (_) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t('admin.actionFailed')))); } }
   Future<void> _changeTopic(String id, String status) async { final reason = TextEditingController(); final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(title: Text(t('admin.publicationReason')), content: TextField(controller: reason, decoration: InputDecoration(labelText: t('admin.reason'))), actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(t('action.cancel'))), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(t('action.save')))])); if (ok != true || reason.text.trim().length < 5) return; try { await widget.repo.setTopicStatus(id, status, reason.text.trim()); await _load(); } catch (_) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t('admin.actionFailed')))); } }
+  Future<void> _reviewSubmission(Map<String,dynamic> row) async { final feedback = TextEditingController(); final decision = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(title: Text('${row['activityTitle'] ?? t('admin.activity')}'), content: SizedBox(width: 520, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [Text('${row['programmeTitle'] ?? ''} · ${row['stage'] ?? ''}'), const SizedBox(height: 10), SelectableText('${row['responseText'] ?? ''}'), const SizedBox(height: 12), TextField(controller: feedback, minLines: 2, maxLines: 5, maxLength: 2000, decoration: InputDecoration(labelText: t('admin.feedback')))]))), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: Text(t('action.cancel'))), TextButton(onPressed: () => Navigator.pop(ctx, 'needs_revision'), child: Text(t('admin.needsRevision'))), FilledButton(onPressed: () => Navigator.pop(ctx, 'reviewed'), child: Text(t('admin.markReviewed')))])); if (decision == null || feedback.text.trim().isEmpty) return; try { await widget.repo.reviewProgrammeSubmission('${row['id']}', decision, feedback.text.trim()); await _load(); } catch (_) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t('admin.actionFailed')))); } }
   Widget _topicCard(Map<String,dynamic> topic) { final labels = topic['labels'] is Map ? Map<String,dynamic>.from(topic['labels']) : <String,dynamic>{}; final status = '${topic['publicationStatus'] ?? ''}'; final editor = widget.roleSet.contains('content_editor'), reviewer = widget.roleSet.contains('content_reviewer'); final next = editor && status == 'draft' ? 'in_review' : reviewer && status == 'in_review' ? 'published' : reviewer && status == 'published' ? 'archived' : null; return Card(color: Colors.white, child: ListTile(title: Text('${labels['en'] ?? topic['id']}'), subtitle: Text('${topic['id']} · $status'), trailing: next == null ? null : TextButton(onPressed: () => _changeTopic('${topic['id']}', next), child: Text(t(next == 'in_review' ? 'admin.submitReview' : next == 'published' ? 'admin.publish' : 'admin.archive'))))); }
   Future<void> _programmeComponents(String id) async { try { final detail = await widget.repo.programmeDetail(id); if (!mounted) return; await showModalBottomSheet<void>(context: context, isScrollControlled: true, builder: (ctx) => SafeArea(child: Padding(padding: const EdgeInsets.all(18), child: ListView(shrinkWrap: true, children: [Text(t('admin.components'), style: Theme.of(ctx).textTheme.titleLarge), for (final entry in [('module', true, detail['modules']), ('activity', false, detail['activities'])]) ...[Text(t(entry.$1 == 'module' ? 'admin.modules' : 'admin.activities')), if (entry.$3 is List) ...(entry.$3 as List).whereType<Map>().map((raw) { final component = Map<String,dynamic>.from(raw); final status = '${component['publicationStatus'] ?? ''}'; final isModule = entry.$2; final componentId = '${component['id'] ?? ''}'; final next = status == 'draft' && widget.roleSet.contains('content_editor') ? 'in_review' : status == 'in_review' && widget.roleSet.contains('content_reviewer') ? 'published' : null; return ListTile(title: Text('${component['title'] ?? componentId}'), subtitle: Text(status), trailing: next == null ? null : TextButton(onPressed: () async { final reason = TextEditingController(); final ok = await showDialog<bool>(context: ctx, builder: (d) => AlertDialog(title: Text(t('admin.publicationReason')), content: TextField(controller: reason, decoration: InputDecoration(labelText: t('admin.reason'))), actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: Text(t('action.cancel'))), FilledButton(onPressed: () => Navigator.pop(d, true), child: Text(t('action.save')))])); if (ok != true || reason.text.trim().length < 5) return; try { await widget.repo.setComponentStatus(id, componentId, isModule, next!, reason.text.trim()); if (mounted) { Navigator.pop(ctx); await _programmeComponents(id); await _load(); } } catch (_) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t('admin.actionFailed')))); } }, child: Text(t(next == 'in_review' ? 'admin.submitReview' : 'admin.publish')))); })]]]))); } catch (_) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t('admin.loadFailed')))); } }
   Widget _card(Map<String,dynamic> item, bool programme) { final editor = widget.roleSet.contains('content_editor'), reviewer = widget.roleSet.contains('content_reviewer'); final status = '${item['publicationStatus'] ?? ''}'; final controls = <Widget>[]; if (programme) { controls.add(TextButton(onPressed: () => _programmeComponents('${item['id']}'), child: Text(t('admin.components')))); if (editor && status == 'draft') { controls.add(TextButton(onPressed: () => _author('module', programmeId: '${item['id']}'), child: Text(t('admin.addModule')))); controls.add(TextButton(onPressed: () => _author('activity', programmeId: '${item['id']}'), child: Text(t('admin.addActivity')))); } } if (editor && status == 'draft') controls.add(TextButton(onPressed: () => _change(item, programme, 'in_review'), child: Text(t('admin.submitReview')))); if (reviewer && status == 'in_review') controls.add(TextButton(onPressed: () => _change(item, programme, 'published'), child: Text(t('admin.publish')))); if (reviewer && status == 'published') controls.add(TextButton(onPressed: () => _change(item, programme, 'draft'), child: Text(t('admin.unpublish')))); if (reviewer && status != 'archived') controls.add(TextButton(onPressed: () => _change(item, programme, 'archived'), child: Text(t('admin.archive')))); return Card(color: Colors.white, child: ExpansionTile(title: Text('${item['title'] ?? item['id']}', style: const TextStyle(fontWeight: FontWeight.bold)), subtitle: Text('${item['contentLanguage'] ?? ''} · ${item['publicationStatus'] ?? ''}${item['mediaConfigured'] == false ? ' · ${t('admin.mediaUnavailable')}' : ''}'), children: [Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Text('${item['description'] ?? t('admin.previewUnavailable')}')), Wrap(spacing: 4, children: controls)])); }
-  @override Widget build(BuildContext context) => RefreshIndicator(onRefresh: _load, child: ListView(padding: const EdgeInsets.all(16), children: [Text(t('admin.content'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: _forest, fontWeight: FontWeight.bold)), Text(t('admin.contentHelp')), if (widget.roleSet.contains('content_editor')) Wrap(spacing: 6, children: [TextButton.icon(onPressed: () => _author('topic'), icon: const Icon(Icons.add), label: Text(t('admin.create.topic'))), TextButton.icon(onPressed: () => _author('content'), icon: const Icon(Icons.add), label: Text(t('admin.create.content'))), TextButton.icon(onPressed: () => _author('programme'), icon: const Icon(Icons.add), label: Text(t('admin.create.programme')))]), if (_busy) const Center(child: Padding(padding: EdgeInsets.all(26), child: CircularProgressIndicator())) else if (_failed) TextButton.icon(onPressed: _load, icon: const Icon(Icons.refresh), label: Text(t('admin.loadFailed'))) else ...[Text(t('admin.topics'), style: Theme.of(context).textTheme.titleMedium), if (_topics.isEmpty) Text(t('admin.empty')), ..._topics.map(_topicCard), Text(t('admin.learningItems'), style: Theme.of(context).textTheme.titleMedium), if (_items.isEmpty) Text(t('admin.empty')), ..._items.map((i) => _card(i, false)), const SizedBox(height: 14), Text(t('admin.programmes'), style: Theme.of(context).textTheme.titleMedium), if (_programmes.isEmpty) Text(t('admin.empty')), ..._programmes.map((i) => _card(i, true)), const SizedBox(height: 12), Text(t('admin.noMediaPublishing'), style: const TextStyle(color: _forest))]]));
+  @override Widget build(BuildContext context) => RefreshIndicator(onRefresh: _load, child: ListView(padding: const EdgeInsets.all(16), children: [Text(t('admin.content'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: _forest, fontWeight: FontWeight.bold)), Text(t('admin.contentHelp')), if (widget.roleSet.contains('content_editor')) Wrap(spacing: 6, children: [TextButton.icon(onPressed: () => _author('topic'), icon: const Icon(Icons.add), label: Text(t('admin.create.topic'))), TextButton.icon(onPressed: () => _author('content'), icon: const Icon(Icons.add), label: Text(t('admin.create.content'))), TextButton.icon(onPressed: () => _author('programme'), icon: const Icon(Icons.add), label: Text(t('admin.create.programme')))]), if (_busy) const Center(child: Padding(padding: EdgeInsets.all(26), child: CircularProgressIndicator())) else if (_failed) TextButton.icon(onPressed: _load, icon: const Icon(Icons.refresh), label: Text(t('admin.loadFailed'))) else ...[if (widget.roleSet.contains('content_reviewer')) ...[Text(t('admin.submissionQueue'), style: Theme.of(context).textTheme.titleMedium), if (_submissions.isEmpty) Text(t('admin.noSubmissions')), ..._submissions.map((s) => Card(color: Colors.white, child: ListTile(title: Text('${s['activityTitle'] ?? ''}'), subtitle: Text('${s['programmeTitle'] ?? ''} · ${s['stage'] ?? ''}'), trailing: const Icon(Icons.rate_review_outlined), onTap: () => _reviewSubmission(s))))], Text(t('admin.topics'), style: Theme.of(context).textTheme.titleMedium), if (_topics.isEmpty) Text(t('admin.empty')), ..._topics.map(_topicCard), Text(t('admin.learningItems'), style: Theme.of(context).textTheme.titleMedium), if (_items.isEmpty) Text(t('admin.empty')), ..._items.map((i) => _card(i, false)), const SizedBox(height: 14), Text(t('admin.programmes'), style: Theme.of(context).textTheme.titleMedium), if (_programmes.isEmpty) Text(t('admin.empty')), ..._programmes.map((i) => _card(i, true)), const SizedBox(height: 12), Text(t('admin.noMediaPublishing'), style: const TextStyle(color: _forest))]]));
 }
 
 class _FinancePage extends StatefulWidget { const _FinancePage({required this.locale, required this.repo}); final LocaleController locale; final AdminRepository repo; @override State<_FinancePage> createState() => _FinancePageState(); }

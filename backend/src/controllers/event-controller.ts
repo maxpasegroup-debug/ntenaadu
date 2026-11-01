@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import type { Request, Response } from 'express';
 import { ApiError, badRequest, forbidden, notFound, unauthorized } from '../errors';
-import { AuditEvent, Club, Event, EventAnnouncement, EventAttendance, EventRegistration, Family, GuardianRelationship, ParentAccount, StudentProfile } from '../models';
+import { AuditEvent, Club, CommunityMembership, CommunityParticipation, Event, EventAnnouncement, EventAttendance, EventRegistration, Family, GuardianRelationship, ParentAccount, StudentProfile } from '../models';
 import { appendAudit } from '../services/audit';
 
 const validBands = new Set(['child', 'youth']);
@@ -266,6 +266,17 @@ export async function recordAttendance(req: Request, res: Response): Promise<voi
   try { await session.withTransaction(async () => {
     const existing = await EventAttendance.findOne({ eventId: event._id, registrationId }).session(session);
     await EventAttendance.findOneAndUpdate({ eventId: event._id, registrationId }, { $set: { studentId: registration.studentId, status, recordedBy: current.parentId, recordedAt: new Date() } }, { upsert: true, new: true, runValidators: true, session });
+    const communityClub = await Club.findOne({ _id: event.clubId, status: 'approved' }).select('communityId').session(session);
+    if (communityClub?.communityId) {
+      const membership = await CommunityMembership.findOne({ communityId: communityClub.communityId, accountId: registration.guardianId, studentId: registration.studentId, status: 'active' }).session(session);
+      if (membership) {
+        if (status === 'present') {
+          await CommunityParticipation.findOneAndUpdate({ membershipId: membership._id, sourceEventId: event._id, activityType: 'event_attendance' }, { $set: { description: 'Attended an approved community event.', status: 'active' }, $setOnInsert: { communityId: communityClub.communityId, membershipId: membership._id, activityType: 'event_attendance', recordedBy: current.parentId, recordedAt: new Date() } }, { upsert: true, new: true, runValidators: true, session });
+        } else {
+          await CommunityParticipation.updateOne({ membershipId: membership._id, sourceEventId: event._id, activityType: 'event_attendance' }, { $set: { status: 'retracted' } }, { session });
+        }
+      }
+    }
     await appendAudit({ actorId: current.parentId, familyId: String(registration.familyId), subjectId: String(registration.studentId), eventType: existing ? 'event.attendance_corrected' : 'event.attendance_recorded', requestId: current.requestId, details: { eventId: String(event._id), registrationId: String(registration._id), previousStatus: existing?.status ?? null, status } }, session);
   }); } finally { await session.endSession(); }
   res.json({ registrationId: String(registration._id), attendanceStatus: status });

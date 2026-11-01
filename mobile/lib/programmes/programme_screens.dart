@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../design_system/nte_design_system.dart';
 import '../localization/locale_controller.dart';
 import '../onboarding/onboarding_models.dart';
 import '../learning/learning_repository.dart';
@@ -8,7 +9,7 @@ import 'programme_repository.dart';
 import '../payments/payment_repository.dart';
 import '../payments/payment_screens.dart';
 
-const _forest = Color(0xFF263A30), _green = Color(0xFF4C8B69), _saffron = Color(0xFFF3A66B), _ivory = Color(0xFFF6F3EC);
+const _forest = NteColors.forest, _green = NteColors.green, _saffron = NteColors.saffron, _ivory = NteColors.ivory;
 
 class ProgrammeLandingTab extends StatefulWidget {
   const ProgrammeLandingTab({required this.locale, required this.repository, required this.learningRepository, required this.paymentRepository, required this.students, this.studentProfileId, this.studentView = false, this.onReportConcern, super.key});
@@ -98,6 +99,16 @@ class _ProgrammeDetailScreenState extends State<ProgrammeDetailScreen> {
     catch (_) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t('programme.progressError')))); }
     if (mounted) setState(() => _busy = false);
   }
+  Future<void> _submit(ProgrammeActivity activity) async {
+    final profileId = widget.studentProfileId; if (profileId == null) return;
+    final response = TextEditingController();
+    final approved = await showDialog<bool>(context: context, builder: (context) => AlertDialog(title: Text(widget.locale.text('programme.submitResponse')), content: TextField(controller: response, minLines: 4, maxLines: 8, maxLength: 4000, decoration: InputDecoration(hintText: widget.locale.text('programme.responseHint'))), actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: Text(widget.locale.text('action.cancel'))), FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(widget.locale.text('action.submit')))]));
+    if (approved != true || response.text.trim().isEmpty) { response.dispose(); return; }
+    setState(() => _busy = true);
+    try { await widget.repository.submitActivity(widget.programmeId, activity.id, profileId, response.text.trim()); await _load(); }
+    catch (_) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(widget.locale.text('programme.submitError')))); }
+    response.dispose(); if (mounted) setState(() => _busy = false);
+  }
   @override Widget build(BuildContext context) {
     final t = widget.locale.text;
     return Scaffold(backgroundColor: _ivory, appBar: AppBar(backgroundColor: _ivory, foregroundColor: _forest, title: Text(t('programme.detailTitle')), actions: [if (widget.onReportConcern != null) IconButton(tooltip: t('safeguarding.reportTitle'), onPressed: widget.onReportConcern, icon: const Icon(Icons.shield_outlined))]),
@@ -127,14 +138,16 @@ class _ProgrammeDetailScreenState extends State<ProgrammeDetailScreen> {
           ..._details!.modules.map((module) => Padding(padding: const EdgeInsets.only(top: 12), child: _Notice(text: '${module.title}\n${module.description}'))),
           if (_details!.programme.access == 'paid' && _details!.programme.accessStatus != 'available') Padding(padding: const EdgeInsets.only(top: 10), child: _Notice(text: t('programme.lockedUntilPayment')))
           else if (_details!.activities.isEmpty) Padding(padding: const EdgeInsets.only(top: 10), child: _Notice(text: t('programme.noActivities')))
-          else ..._details!.activities.map((a) => Card(color: Colors.white, child: Padding(padding: const EdgeInsets.all(15), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(a.title, style: const TextStyle(fontWeight: FontWeight.w700)), const SizedBox(height: 5), Text(a.description),
+          else ...([..._details!.activities]..sort((a,b) => _stageRank(a.stage).compareTo(_stageRank(b.stage)))).map((a) => Card(color: Colors.white, child: Padding(padding: const EdgeInsets.all(15), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Chip(label: Text(t('programme.stage.${a.stage}'))), Text(a.title, style: const TextStyle(fontWeight: FontWeight.w700)), const SizedBox(height: 5), Text(a.description),
             if (a.learningContentId != null) Padding(padding: const EdgeInsets.only(top: 6), child: OutlinedButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => LearningContentDetailScreen(contentId: a.learningContentId!, locale: widget.locale, repository: widget.learningRepository, studentProfileId: widget.studentProfileId))), icon: const Icon(Icons.play_circle_outline), label: Text(t(a.status == 'in_progress' ? 'programme.continueActivity' : 'programme.openActivity')))),
+            if (_details!.enrollmentStatus == 'active' && a.responseRequired && a.submissionStatus != 'submitted' && a.submissionStatus != 'reviewed') Align(alignment: AlignmentDirectional.centerStart, child: OutlinedButton.icon(onPressed: _busy ? null : () => _submit(a), icon: const Icon(Icons.edit_note), label: Text(t('programme.writeResponse')))),
+            if (a.submissionStatus != null) Padding(padding: const EdgeInsets.only(top: 8), child: _Notice(text: '${t('programme.submissionStatus')}: ${t('programme.submission.${a.submissionStatus!}')}${a.submissionFeedback?.isNotEmpty == true ? '\n${t('programme.feedback')}: ${a.submissionFeedback}' : ''}')),
             if (_details!.enrollmentStatus == 'active') Wrap(spacing: 8, children: [
               TextButton(onPressed: _busy ? null : () => _progress(a, 'in_progress'), child: Text(t('programme.markInProgress'))),
-              TextButton.icon(onPressed: _busy ? null : () => _progress(a, 'completed'), icon: const Icon(Icons.check_circle_outline), label: Text(t(a.status == 'completed' ? 'programme.activityComplete' : 'programme.markComplete'))),
+              TextButton.icon(onPressed: _busy || a.status == 'completed' || (a.responseRequired && (a.submissionStatus != 'submitted' && a.submissionStatus != 'reviewed' || a.requiresReview && a.submissionStatus != 'reviewed')) ? null : () => _progress(a, 'completed'), icon: const Icon(Icons.check_circle_outline), label: Text(t(a.status == 'completed' ? 'programme.activityComplete' : 'programme.markComplete'))),
             ]),
-            if (a.status == 'completed') Text(t('programme.guardianRecorded'), style: const TextStyle(color: _green)),
+            if (a.status == 'completed') Text(t(a.completionSource == 'system_earned' ? 'programme.growthEarned' : a.completionSource == 'activity_submission' ? 'programme.submissionCounted' : 'programme.guardianRecorded'), style: const TextStyle(color: _green)),
           ])))),
           if (widget.studentProfileId == null) ...[const SizedBox(height: 12), _Notice(text: t('programme.chooseLearnerToEnroll'))],
           if (_details!.programme.id.toLowerCase() == 'dream_addiction' || _details!.programme.title.toLowerCase().contains('dream addiction')) ...[
@@ -143,6 +156,8 @@ class _ProgrammeDetailScreenState extends State<ProgrammeDetailScreen> {
         ]));
   }
 }
+
+int _stageRank(String stage) => const {'learn':0,'practise':1,'participate':2,'take_action':3,'reflect':4,'grow':5}[stage] ?? 0;
 
 class _Notice extends StatelessWidget {
   const _Notice({required this.text, this.action}); final String text; final Widget? action;

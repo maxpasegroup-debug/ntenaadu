@@ -35,6 +35,7 @@ class OnboardingApiRepository implements OnboardingRepository {
       'contact': request.contact,
       'password': request.password,
       'preferredLanguage': request.preferredLanguage,
+      'membershipCategory': request.membershipCategory,
     });
     return RegistrationResult(verificationPending: response.data?['status'] == 'verification_pending');
   });
@@ -80,6 +81,9 @@ class OnboardingApiRepository implements OnboardingRepository {
     name: parent['name'].toString(),
     contact: parent['contact'].toString(),
     preferredLanguage: parent['preferredLanguage'].toString(),
+    membershipCategory: parent['membershipCategory']?.toString() ?? 'guardian',
+    membershipId: parent['membershipId']?.toString(),
+    membershipStatus: parent['membershipStatus']?.toString() ?? 'active',
   );
 
   @override
@@ -88,6 +92,14 @@ class OnboardingApiRepository implements OnboardingRepository {
   @override
   Future<void> updatePreferredLanguage(String languageCode) => _request(() async {
     await client.dio.patch<void>('/auth/me/language', data: {'preferredLanguage': languageCode});
+  });
+
+  @override
+  Future<ParentAccount> updateAccountProfile({required String name, required String membershipCategory}) => _request(() async {
+    final response = await client.dio.patch<Map<String, dynamic>>('/auth/me/profile', data: {
+      'name': name, 'membershipCategory': membershipCategory,
+    });
+    return _parent(_map(response.data?['parent']));
   });
 
   @override
@@ -162,6 +174,76 @@ class OnboardingApiRepository implements OnboardingRepository {
   @override
   Future<void> revokeGuardianConsent(String relationshipId) => _request(() async {
     await client.dio.post<void>('/family/relationships/${Uri.encodeComponent(relationshipId)}/consent/revocations', data: {'confirm': true});
+  });
+
+  @override
+  Future<List<GuardianMember>> getFamilyGuardians() => _request(() async {
+    final response = await client.dio.get<Map<String, dynamic>>('/family/guardians');
+    final guardians = response.data?['guardians'];
+    if (guardians is! List) return <GuardianMember>[];
+    return guardians.map((value) {
+      final item = _map(value);
+      final permissions = item['permissions'];
+      return GuardianMember(
+        id: item['id'].toString(), name: item['name'].toString(),
+        membershipCategory: item['membershipCategory']?.toString() ?? 'guardian',
+        permissions: permissions is List ? permissions.map((value) => value.toString()).toList() : const [],
+        isOwner: item['isOwner'] == true,
+      );
+    }).toList();
+  });
+
+  @override
+  Future<GuardianInvitationInbox> getGuardianInvitations() => _request(() async {
+    final response = await client.dio.get<Map<String, dynamic>>('/family/guardian-invitations');
+    List<GuardianInvitation> parse(dynamic value, {required bool incoming}) => value is List ? value.map((item) {
+      final json = _map(item);
+      return GuardianInvitation(
+        id: json['id'].toString(), status: json['status']?.toString() ?? 'pending',
+        inviterName: incoming ? json['inviterName']?.toString() : null,
+        inviteeContact: incoming ? null : json['inviteeContact']?.toString(),
+        expiresAt: DateTime.tryParse(json['expiresAt']?.toString() ?? ''),
+      );
+    }).toList() : <GuardianInvitation>[];
+    return GuardianInvitationInbox(
+      incoming: parse(response.data?['incoming'], incoming: true),
+      outgoing: parse(response.data?['outgoing'], incoming: false),
+    );
+  });
+
+  @override
+  Future<CreatedGuardianInvitation> createGuardianInvitation(String contact) => _request(() async {
+    final response = await client.dio.post<Map<String, dynamic>>('/family/guardian-invitations', data: {'contact': contact});
+    final data = response.data ?? const <String, dynamic>{};
+    final invitation = _map(data['invitation']);
+    final token = data['invitationToken'];
+    if (token is! String || token.isEmpty) throw const OnboardingServiceException('SERVICE_RESPONSE_INVALID', null);
+    return CreatedGuardianInvitation(
+      invitation: GuardianInvitation(id: invitation['id'].toString(), status: invitation['status']?.toString() ?? 'pending', expiresAt: DateTime.tryParse(invitation['expiresAt']?.toString() ?? '')),
+      oneTimeToken: token,
+    );
+  });
+
+  @override
+  Future<void> respondToGuardianInvitation({required String invitationId, required String oneTimeToken, required bool accept}) => _request(() async {
+    await client.dio.post<void>('/family/guardian-invitations/${Uri.encodeComponent(invitationId)}/response', data: {
+      'decision': accept ? 'accept' : 'reject', 'invitationToken': oneTimeToken,
+    });
+  });
+
+  @override
+  Future<void> cancelGuardianInvitation(String invitationId) => _request(() async {
+    await client.dio.delete<void>('/family/guardian-invitations/${Uri.encodeComponent(invitationId)}');
+  });
+
+  @override
+  Future<void> revokeFamilyGuardian(String guardianId) => _request(() async {
+    await client.dio.delete<void>('/family/guardians/${Uri.encodeComponent(guardianId)}');
+  });
+
+  @override
+  Future<void> reportFamilyAccessDispute({required String guardianId, required String reason}) => _request(() async {
+    await client.dio.post<void>('/family/guardians/${Uri.encodeComponent(guardianId)}/disputes', data: {'reason': reason});
   });
 
   StudentProfileDraft _student(Map<String, dynamic> json) {

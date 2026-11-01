@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../design_system/nte_design_system.dart';
 import 'languages.dart';
 import 'locale_controller.dart';
 
@@ -21,8 +22,8 @@ class LanguagePickerButton extends StatelessWidget {
         icon: const Icon(Icons.language),
         label: compact ? Text(current.nativeName) : Text('${current.nativeName} · ${current.englishName}'),
         style: OutlinedButton.styleFrom(
-          foregroundColor: const Color(0xFF263A30),
-          side: const BorderSide(color: Color(0xFF4C8B69)),
+          foregroundColor: NteColors.forest,
+          side: const BorderSide(color: NteColors.green),
           minimumSize: const Size(48, 48),
         ),
       ),
@@ -39,7 +40,7 @@ Future<void> showLanguagePicker(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    backgroundColor: const Color(0xFFF6F3EC),
+    backgroundColor: NteColors.ivory,
     builder: (context) => _LanguagePickerSheet(controller: controller, onLanguageChanged: onLanguageChanged),
   );
 }
@@ -108,7 +109,7 @@ class _LanguagePickerSheetState extends State<_LanguagePickerSheet> {
                         ),
                         subtitle: Text(language.englishName),
                         trailing: language.available
-                            ? selected ? const Icon(Icons.check_circle, color: Color(0xFF4C8B69)) : null
+                            ? selected ? const Icon(Icons.check_circle, color: NteColors.green) : null
                             : Text(strings.text('language.comingSoon'), style: Theme.of(context).textTheme.bodySmall),
                         onTap: language.available
                             ? () async {

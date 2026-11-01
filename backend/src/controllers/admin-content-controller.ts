@@ -1,11 +1,16 @@
 import type { Request, Response } from 'express';
+import mongoose from 'mongoose';
 import { badRequest, forbidden, notFound, unauthorized, unavailable } from '../errors';
-import { LearningContent, LearningTopic, ParentAccount, Programme, ProgrammeActivity, ProgrammeModule } from '../models';
+import { LearningContent, LearningTopic, ParentAccount, Programme, ProgrammeActivity, ProgrammeModule, ProgrammeSubmission } from '../models';
 import { learningMediaProvider } from '../services/learning-media';
 import { appendAudit } from '../services/audit';
 
 const languages = new Set(['en', 'hi', 'ml', 'ta']);
 const ageBands = new Set(['child', 'youth']);
+const alttStages = new Set(['learn','practise','participate','take_action','reflect','grow']);
+const activityTypes = new Set(['lesson','practice','assignment','participation','action','reflection','recognition']);
+function defaultStage(type: string) { return ({lesson:'learn',practice:'practise',assignment:'practise',participation:'participate',action:'take_action',reflection:'reflect',recognition:'grow'} as Record<string,string>)[type] ?? 'learn'; }
+function activityMatchesStage(stage: string,type: string) { return stage==='practise'?['practice','assignment'].includes(type):({learn:'lesson',participate:'participation',take_action:'action',reflect:'reflection',grow:'recognition'} as Record<string,string>)[stage]===type; }
 function auth(req: Request) { if (!req.nteAuth) throw unauthorized(); return req.nteAuth; }
 function requestId(req: Request) { return req.nteRequestId ?? ''; }
 function reason(value: unknown) { if (typeof value !== 'string' || value.trim().length < 5 || value.trim().length > 1000) throw badRequest('CONTENT_ACTION_REASON_REQUIRED', 'Enter a reason of at least five characters.'); return value.trim(); }
@@ -36,10 +41,10 @@ function contentDto(item: typeof LearningContent.prototype) {
   return { id: item.contentId, contentGroupId: item.contentGroupId, title: item.title, description: item.description, contentLanguage: item.contentLanguage,
     mediaType: item.mediaType, durationSeconds: item.durationSeconds ?? null, topicIds: item.topicIds, programmeId: item.programmeId ?? null,
     programmeName: item.programmeName ?? null, ageBands: item.ageBands, learningObjectives: item.learningObjectives, accessRequirement: item.accessRequirement,
-    publicationStatus: item.publicationStatus, mediaConfigured: Boolean(item.mediaAssetKey), mediaProviderAvailable: learningMediaProvider.available };
+    publicationStatus: item.publicationStatus, mediaConfigured: item.mediaType==='reading'?Boolean(item.readingBody):Boolean(item.mediaAssetKey), mediaProviderAvailable: learningMediaProvider.available };
 }
 async function editableContent(contentId: unknown) {
-  const item = await LearningContent.findOne({ contentId }).select('+mediaAssetKey');
+  const item = await LearningContent.findOne({ contentId }).select('+mediaAssetKey +readingBody');
   if (!item) throw notFound();
   if (item.publicationStatus !== 'draft') throw forbidden();
   return item;
@@ -86,7 +91,7 @@ export async function setTopicPublication(req: Request, res: Response): Promise<
 export async function listContent(req: Request, res: Response): Promise<void> {
   const status = typeof req.query.status === 'string' ? req.query.status : '';
   const query = status && ['draft', 'in_review', 'published', 'archived'].includes(status) ? { publicationStatus: status } : {};
-  const items = await LearningContent.find(query).sort({ updatedAt: -1 }).limit(100).select('+mediaAssetKey');
+  const items = await LearningContent.find(query).sort({ updatedAt: -1 }).limit(100).select('+mediaAssetKey +readingBody');
   await audit(req, 'admin.learning_content_viewed');
   res.json({ items: items.map(contentDto), mediaProviderAvailable: learningMediaProvider.available });
 }
@@ -98,13 +103,15 @@ export async function createContent(req: Request, res: Response): Promise<void> 
   const contentGroupId = slug(body.contentGroupId, 'content group identifier');
   const contentLanguage = str(body.contentLanguage, 'content language', 2, 8);
   if (!languages.has(contentLanguage)) throw badRequest('CONTENT_LANGUAGE_INVALID', 'Select a supported content language.');
-  if (!['audio', 'video'].includes(body.mediaType)) throw badRequest('CONTENT_MEDIA_TYPE_INVALID', 'Select audio or video.');
+  if (!['audio', 'video', 'reading'].includes(body.mediaType)) throw badRequest('CONTENT_MEDIA_TYPE_INVALID', 'Select audio, video or reading material.');
   const bands = list(body.ageBands, ageBands, 'age groups');
   if (!['free', 'paid'].includes(body.accessRequirement)) throw badRequest('CONTENT_ACCESS_INVALID', 'Select a valid access type.');
   const mediaKey = body.mediaAssetKey == null || body.mediaAssetKey === '' ? undefined : str(body.mediaAssetKey, 'NTE media asset key', 1, 500);
   if (mediaKey && (/^https?:\/\//i.test(mediaKey) || /[?#]/.test(mediaKey))) throw badRequest('MEDIA_REFERENCE_INVALID', 'Use an NTE media asset key, not a URL.');
+  const readingBody = body.mediaType==='reading'?str(body.readingBody,'reading text',20,20000):undefined;
+  if(body.mediaType!=='reading'&&!mediaKey) throw badRequest('MEDIA_REFERENCE_REQUIRED','Add an NTE media asset key for audio or video.');
   const item = await LearningContent.create({ contentId, contentGroupId, title: str(body.title, 'title', 1, 240), description: str(body.description, 'description', 1, 4000), contentLanguage,
-    mediaType: body.mediaType, ...(mediaKey ? { mediaAssetKey: mediaKey } : {}), ...(Number.isSafeInteger(body.durationSeconds) && body.durationSeconds > 0 ? { durationSeconds: body.durationSeconds } : {}),
+    mediaType: body.mediaType, ...(mediaKey ? { mediaAssetKey: mediaKey } : {}), ...(readingBody ? { readingBody } : {}), ...(Number.isSafeInteger(body.durationSeconds) && body.durationSeconds > 0 ? { durationSeconds: body.durationSeconds } : {}),
     topicIds: Array.isArray(body.topicIds) ? body.topicIds.map((x: unknown) => slug(x, 'topic identifier')) : [], programmeId: body.programmeId ? slug(body.programmeId, 'programme identifier') : undefined,
     programmeName: body.programmeName ? str(body.programmeName, 'programme name', 1, 240) : undefined, ageBands: bands,
     learningObjectives: Array.isArray(body.learningObjectives) ? body.learningObjectives.filter((x: unknown) => typeof x === 'string').map((x: string) => str(x, 'learning objective', 1, 500)) : [],
@@ -123,6 +130,7 @@ export async function updateContent(req: Request, res: Response): Promise<void> 
   if (body.topicIds != null) item.topicIds = Array.isArray(body.topicIds) ? body.topicIds.map((x: unknown) => slug(x, 'topic identifier')) : [];
   if (body.learningObjectives != null) item.learningObjectives = Array.isArray(body.learningObjectives) ? body.learningObjectives.map((x: unknown) => str(x, 'learning objective', 1, 500)) : [];
   if (body.mediaAssetKey != null) { const key = body.mediaAssetKey === '' ? '' : str(body.mediaAssetKey, 'NTE media asset key', 1, 500); if (/^https?:\/\//i.test(key) || /[?#]/.test(key)) throw badRequest('MEDIA_REFERENCE_INVALID', 'Use an NTE media asset key, not a URL.'); item.mediaAssetKey = key || undefined; }
+  if (body.readingBody != null) item.readingBody = body.readingBody === '' ? '' : str(body.readingBody, 'reading text', 20, 20000);
   await item.save();
   await audit(req, 'admin.learning_content_updated', item.contentId);
   res.json({ item: contentDto(item) });
@@ -133,12 +141,13 @@ export async function setContentPublication(req: Request, res: Response): Promis
   const actionReason = reason(req.body?.reason);
   if (!['in_review', 'draft', 'published', 'archived'].includes(status)) throw badRequest('PUBLICATION_STATUS_INVALID', 'Select a valid publication state.');
   await requireActorRole(req, status === 'in_review' ? 'content_editor' : 'content_reviewer');
-  const item = await LearningContent.findOne({ contentId: req.params.contentId }).select('+mediaAssetKey');
+  const item = await LearningContent.findOne({ contentId: req.params.contentId }).select('+mediaAssetKey +readingBody');
   if (!item) throw notFound();
   if (status === 'in_review' && item.publicationStatus !== 'draft') throw badRequest('PUBLICATION_TRANSITION_INVALID', 'Only drafts can be submitted for review.');
   if (status === 'published') {
     if (item.publicationStatus !== 'in_review') throw badRequest('PUBLICATION_TRANSITION_INVALID', 'Only reviewed items can be published.');
-    if (!item.mediaAssetKey || !learningMediaProvider.available) throw unavailable('MEDIA_PROVIDER_UNAVAILABLE', 'A configured NTE media provider and asset are required before publishing media.');
+    if (item.mediaType === 'reading') { if (!item.readingBody || item.readingBody.trim().length < 20) throw badRequest('READING_CONTENT_REQUIRED', 'Add at least 20 characters of reviewed reading material.'); }
+    else if (!item.mediaAssetKey || !learningMediaProvider.available) throw unavailable('MEDIA_PROVIDER_UNAVAILABLE', 'A configured NTE media provider and asset are required before publishing media.');
     if (!item.ageBands.length || !item.title.trim() || !item.description.trim()) throw badRequest('CONTENT_INCOMPLETE', 'Add a title, description and age eligibility before publishing.');
     if (item.topicIds.length && (await LearningTopic.countDocuments({ topicId: { $in: item.topicIds }, publicationStatus: 'published' })) !== item.topicIds.length) throw badRequest('CONTENT_TOPIC_UNAVAILABLE', 'All linked topics must be published.');
     if (item.programmeId && !(await Programme.exists({ programmeId: item.programmeId, publicationStatus: 'published' }))) throw badRequest('CONTENT_PROGRAMME_UNAVAILABLE', 'Publish the linked programme before this content.');
@@ -198,12 +207,12 @@ export async function programmeDetail(req: Request, res: Response): Promise<void
   const programme = await Programme.findOne({ programmeId: req.params.programmeId }).select('-purchaseTerms -priceAmountMinor -priceCurrency -priceCurrencyExponent'); if (!programme) throw notFound();
   const [modules, activities] = await Promise.all([
     ProgrammeModule.find({ programmeId: programme.programmeId }).sort({ sortOrder: 1 }).select('moduleId title description contentLanguage sortOrder publicationStatus'),
-    ProgrammeActivity.find({ programmeId: programme.programmeId }).sort({ sortOrder: 1 }).select('activityId moduleId title description contentLanguage ageBands learningContentId sortOrder publicationStatus'),
+    ProgrammeActivity.find({ programmeId: programme.programmeId }).sort({ sortOrder: 1 }).select('activityId moduleId title description contentLanguage ageBands learningContentId sortOrder publicationStatus stage activityType responseRequired requiresReview'),
   ]);
   await audit(req, 'admin.programme_detail_viewed', programme.programmeId);
   res.json({ programme: { id: programme.programmeId, title: programme.title, description: programme.description, contentLanguage: programme.contentLanguage, ageBands: programme.ageBands, accessRequirement: programme.accessRequirement, publicationStatus: programme.publicationStatus,
     modules: modules.map((m) => ({ id: m.moduleId, title: m.title, description: m.description, contentLanguage: m.contentLanguage, sortOrder: m.sortOrder, publicationStatus: m.publicationStatus })),
-    activities: activities.map((a) => ({ id: a.activityId, moduleId: a.moduleId ?? null, title: a.title, description: a.description, contentLanguage: a.contentLanguage, ageBands: a.ageBands, learningContentId: a.learningContentId ?? null, sortOrder: a.sortOrder, publicationStatus: a.publicationStatus })) } });
+    activities: activities.map((a) => ({ id: a.activityId, moduleId: a.moduleId ?? null, title: a.title, description: a.description, contentLanguage: a.contentLanguage, ageBands: a.ageBands, learningContentId: a.learningContentId ?? null, sortOrder: a.sortOrder, stage:a.stage, activityType:a.activityType, responseRequired:a.responseRequired, requiresReview:a.requiresReview, publicationStatus: a.publicationStatus })) } });
 }
 
 export async function createModule(req: Request, res: Response): Promise<void> {
@@ -224,7 +233,8 @@ export async function createActivity(req: Request, res: Response): Promise<void>
   const age = list(body.ageBands ?? programme.ageBands, ageBands, 'age groups');
   const learningContentId = body.learningContentId ? slug(body.learningContentId, 'learning content identifier') : undefined;
   if (learningContentId && !(await LearningContent.exists({ contentId: learningContentId, publicationStatus: { $in: ['draft', 'in_review', 'published'] } }))) throw notFound();
-  const activity = await ProgrammeActivity.create({ programmeId, activityId: slug(body.activityId, 'activity identifier'), moduleId: body.moduleId ? slug(body.moduleId, 'module identifier') : undefined,
+  const activityType=typeof body.activityType==='string'&&activityTypes.has(body.activityType)?body.activityType:'lesson';const stage=typeof body.stage==='string'?body.stage:defaultStage(activityType);if(!alttStages.has(stage)||!activityMatchesStage(stage,activityType))throw badRequest('ALTT_ACTIVITY_INVALID','Choose an activity type that matches its ALTT stage.');const responseRequired=typeof body.responseRequired==='boolean'?body.responseRequired:['practice','assignment','participation','action','reflection'].includes(activityType);const requiresReview=body.requiresReview===true;if(requiresReview&&!responseRequired||['practice','assignment','reflection'].includes(activityType)&&!responseRequired)throw badRequest('ALTT_RESPONSE_REQUIRED','Practice, assignment and reflection activities require a member response.');
+  const activity = await ProgrammeActivity.create({ programmeId, activityId: slug(body.activityId, 'activity identifier'), moduleId: body.moduleId ? slug(body.moduleId, 'module identifier') : undefined, stage, activityType, responseRequired, requiresReview,
     title: str(body.title, 'title', 1, 240), description: str(body.description, 'description', 1, 4000), contentLanguage: language, ageBands: age, learningContentId,
     sortOrder: Number.isSafeInteger(body.sortOrder) ? body.sortOrder : 0, publicationStatus: 'draft' });
   await audit(req, 'admin.programme_activity_created', activity.activityId);
@@ -246,6 +256,11 @@ export async function updateProgrammeComponent(req: Request, res: Response): Pro
   const activity = await ProgrammeActivity.findOne({ programmeId, activityId, publicationStatus: 'draft' }); if (!activity) throw notFound();
   if (body.title != null) activity.title = str(body.title, 'title', 1, 240);
   if (body.description != null) activity.description = str(body.description, 'description', 1, 4000);
+  if(body.activityType!=null){if(typeof body.activityType!=='string'||!activityTypes.has(body.activityType))throw badRequest('ALTT_ACTIVITY_INVALID','Select a supported activity type.');activity.activityType=body.activityType;}
+  if(body.stage!=null){if(typeof body.stage!=='string'||!alttStages.has(body.stage))throw badRequest('ALTT_STAGE_INVALID','Select a supported ALTT stage.');activity.stage=body.stage;}
+  if(body.responseRequired!=null){if(typeof body.responseRequired!=='boolean')throw badRequest('ALTT_RESPONSE_INVALID','Choose whether a response is required.');activity.responseRequired=body.responseRequired;}
+  if(body.requiresReview!=null){if(typeof body.requiresReview!=='boolean')throw badRequest('ALTT_REVIEW_INVALID','Choose whether review is required.');activity.requiresReview=body.requiresReview;}
+  if(!activityMatchesStage(activity.stage,activity.activityType)||activity.requiresReview&&!activity.responseRequired||['practice','assignment','reflection'].includes(activity.activityType)&&!activity.responseRequired)throw badRequest('ALTT_ACTIVITY_INVALID','Activity type, ALTT stage and response settings must match.');
   if (body.contentLanguage != null) { if (!languages.has(body.contentLanguage)) throw badRequest('CONTENT_LANGUAGE_INVALID', 'Select a supported content language.'); activity.contentLanguage = body.contentLanguage; }
   if (body.ageBands != null) activity.ageBands = list(body.ageBands, ageBands, 'age groups');
   if (body.learningContentId != null) { const id = body.learningContentId === '' ? '' : slug(body.learningContentId, 'learning content identifier'); if (id && !(await LearningContent.exists({ contentId: id, publicationStatus: { $in: ['draft', 'in_review', 'published'] } }))) throw notFound(); activity.learningContentId = id || undefined; }
@@ -276,9 +291,12 @@ export async function setProgrammeComponentPublication(req: Request, res: Respon
       if (activity.ageBands.some((band: string) => !programme.ageBands.includes(band))) throw badRequest('CONTENT_AGE_MISMATCH', 'Activity eligibility must be within the programme age groups.');
       if (activity.moduleId && !(await ProgrammeModule.exists({ programmeId, moduleId: activity.moduleId, publicationStatus: 'published' }))) throw badRequest('CONTENT_MODULE_UNAVAILABLE', 'Publish the linked module before this activity.');
       if (activity.learningContentId) {
-        const linked = await LearningContent.findOne({ contentId: activity.learningContentId, publicationStatus: 'published' }).select('+mediaAssetKey');
-        if (!linked || !linked.mediaAssetKey || !learningMediaProvider.available) throw unavailable('MEDIA_PROVIDER_UNAVAILABLE', 'Linked learning media is not configured and published.');
+        const linked = await LearningContent.findOne({ contentId: activity.learningContentId, publicationStatus: 'published' }).select('+mediaAssetKey +readingBody');
+        if (!linked || (linked.mediaType === 'reading' ? !linked.readingBody : !linked.mediaAssetKey || !learningMediaProvider.available)) throw unavailable('LEARNING_CONTENT_UNAVAILABLE', 'Linked learning content is not configured and published.');
       }
+      if (activity.responseRequired && !['practise', 'participate', 'take_action', 'reflect'].includes(activity.stage)) throw badRequest('ALTT_RESPONSE_STAGE_INVALID', 'Response activities must use a practical ALTT stage.');
+      if (['practice','assignment','reflection'].includes(activity.activityType) && !activity.responseRequired) throw badRequest('ALTT_RESPONSE_REQUIRED', 'Practice, assignment and reflection activities require a member response.');
+      if (activity.requiresReview && !activity.responseRequired) throw badRequest('ALTT_REVIEW_INVALID', 'Review requires a member response.');
     }
   }
   component.publicationStatus = status; await component.save();
@@ -299,10 +317,47 @@ export async function setProgrammePublication(req: Request, res: Response): Prom
     const modules = await ProgrammeModule.countDocuments({ programmeId: programme.programmeId, contentLanguage: programme.contentLanguage, publicationStatus: 'published' });
     const activities = await ProgrammeActivity.countDocuments({ programmeId: programme.programmeId, contentLanguage: programme.contentLanguage, publicationStatus: 'published' });
     if (!modules || !activities) throw badRequest('PROGRAMME_INCOMPLETE', 'Publish at least one module and activity before the programme.');
+    const publishedStages = await ProgrammeActivity.distinct('stage', { programmeId: programme.programmeId, contentLanguage: programme.contentLanguage, publicationStatus: 'published' });
+    if (['learn','practise','participate','take_action','reflect','grow'].some((stage) => !publishedStages.includes(stage))) throw badRequest('ALTT_CYCLE_INCOMPLETE', 'Publish at least one activity for each ALTT stage before publishing this programme.');
     if (programme.accessRequirement === 'paid' && !(programme.priceAmountMinor && programme.priceCurrency && programme.purchaseType && programme.purchaseTerms && programme.purchaseTermsVersion && programme.purchaseTermsLanguageCode && programme.purchaseTermsReviewStatus === 'approved')) throw badRequest('PROGRAMME_PURCHASE_CONFIGURATION_REQUIRED', 'Paid programmes need approved price, purchase type and terms before publication.');
   }
   programme.publicationStatus = status; if (status === 'published') programme.publishedAt = new Date(); if (status !== 'published') programme.publishedAt = undefined;
   await programme.save(); await audit(req, `admin.programme_${status}`, programme.programmeId, actionReason);
   res.json({ id: programme.programmeId, publicationStatus: programme.publicationStatus });
+}
+
+export async function submissionQueue(req: Request, res: Response): Promise<void> {
+  await requireActorRole(req, 'content_reviewer');
+  const rows = await ProgrammeSubmission.find({ status: 'submitted' }).sort({ submittedAt: 1 }).limit(100).select('+responseText programmeId activityId familyId studentId attempt status submittedAt');
+  const programmeIds = [...new Set(rows.map((row) => row.programmeId))];
+  const activityIds = [...new Set(rows.map((row) => row.activityId))];
+  const [programmes, activities] = await Promise.all([
+    Programme.find({ programmeId: { $in: programmeIds } }).select('programmeId title'),
+    ProgrammeActivity.find({ programmeId: { $in: programmeIds }, activityId: { $in: activityIds } }).select('programmeId activityId title stage'),
+  ]);
+  const programmeById = new Map(programmes.map((item) => [item.programmeId, item.title]));
+  const activityByKey = new Map(activities.map((item) => [`${item.programmeId}:${item.activityId}`, item]));
+  await audit(req, 'admin.programme_submissions_viewed');
+  res.json({ submissions: rows.map((row) => {
+    const activity = activityByKey.get(`${row.programmeId}:${row.activityId}`);
+    return { id: String(row._id), programmeId: row.programmeId, programmeTitle: programmeById.get(row.programmeId) ?? '', activityId: row.activityId, activityTitle: activity?.title ?? '', stage: activity?.stage ?? '', responseText: row.responseText, attempt: row.attempt, submittedAt: row.submittedAt };
+  }) });
+}
+
+export async function reviewSubmission(req: Request, res: Response): Promise<void> {
+  await requireActorRole(req, 'content_reviewer');
+  if (!/^[a-f\d]{24}$/i.test(req.params.submissionId)) throw notFound();
+  const status = req.body?.status;
+  if (!['reviewed', 'needs_revision'].includes(status)) throw badRequest('SUBMISSION_REVIEW_INVALID', 'Select reviewed or needs revision.');
+  const feedback = str(req.body?.feedback, 'feedback', 1, 2000);
+  const submission = await ProgrammeSubmission.findById(req.params.submissionId);
+  if (!submission || submission.status !== 'submitted') throw notFound();
+  submission.status = status;
+  submission.feedback = feedback;
+  submission.reviewedBy = new mongoose.Types.ObjectId(auth(req).parentId);
+  submission.reviewedAt = new Date();
+  await submission.save();
+  await audit(req, 'admin.programme_submission_reviewed', String(submission._id), status);
+  res.json({ id: String(submission._id), status: submission.status, reviewedAt: submission.reviewedAt });
 }
 

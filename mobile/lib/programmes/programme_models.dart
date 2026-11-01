@@ -17,13 +17,20 @@ class ProgrammeSummary {
 }
 
 class ProgrammeActivity {
-  const ProgrammeActivity({required this.id, required this.title, required this.description, required this.language, this.moduleId, this.learningContentId, this.status});
+  const ProgrammeActivity({required this.id, required this.title, required this.description, required this.language, this.moduleId, this.learningContentId, this.status, this.stage = 'learn', this.activityType = 'lesson', this.responseRequired = false, this.requiresReview = false, this.submissionStatus, this.submissionResponse, this.submissionFeedback, this.completionSource});
   final String id, title, description, language;
   final String? moduleId, learningContentId, status;
+  final String stage, activityType;
+  final bool responseRequired, requiresReview;
+  final String? submissionStatus, submissionResponse, submissionFeedback;
+  final String? completionSource;
   factory ProgrammeActivity.fromJson(Map<String, dynamic> json) => ProgrammeActivity(
     id: json['id']?.toString() ?? '', title: json['title']?.toString() ?? '', description: json['description']?.toString() ?? '',
     language: json['contentLanguage']?.toString() ?? 'en', moduleId: json['moduleId']?.toString(),
     learningContentId: json['learningContentId']?.toString(), status: json['status']?.toString(),
+    stage: json['stage']?.toString() ?? 'learn', activityType: json['activityType']?.toString() ?? 'lesson', responseRequired: json['responseRequired'] == true, requiresReview: json['requiresReview'] == true,
+    submissionStatus: json['submissionStatus']?.toString(), submissionResponse: json['submissionResponse']?.toString(), submissionFeedback: json['submissionFeedback']?.toString(),
+    completionSource: json['completionSource']?.toString(),
   );
 }
 

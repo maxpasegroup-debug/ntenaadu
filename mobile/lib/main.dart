@@ -4,6 +4,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'admin/admin_repository.dart';
 import 'admin/admin_console.dart';
+import 'design_system/nte_design_system.dart';
 
 import 'localization/languages.dart';
 import 'localization/locale_controller.dart';
@@ -13,15 +14,11 @@ import 'clubs/club_repository.dart';
 import 'events/event_repository.dart';
 import 'programmes/programme_repository.dart';
 import 'payments/payment_repository.dart';
+import 'community/community_repository.dart';
 import 'network/api_client.dart';
 import 'onboarding/onboarding_api_repository.dart';
 import 'onboarding/onboarding_screens.dart';
 import 'onboarding/onboarding_session.dart';
-
-const _forest = Color(0xFF263A30);
-const _green = Color(0xFF4C8B69);
-const _saffron = Color(0xFFF3A66B);
-const _ivory = Color(0xFFF6F3EC);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -37,6 +34,7 @@ Future<void> main() async {
     programmeRepository: ProgrammeApiRepository(apiClient),
     paymentRepository: PaymentApiRepository(apiClient),
     adminRepository: AdminRepository(apiClient),
+    communityRepository: CommunityRepository(apiClient),
   );
   runApp(NteNaaduApp(
     localeController: localeController,
@@ -64,21 +62,7 @@ class NteNaaduApp extends StatelessWidget {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      theme: ThemeData(
-        useMaterial3: true,
-        scaffoldBackgroundColor: _ivory,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: _green,
-          primary: _green,
-          secondary: _saffron,
-          surface: Colors.white,
-          onSurface: _forest,
-        ),
-        textTheme: ThemeData.light().textTheme.apply(bodyColor: _forest, displayColor: _forest),
-        filledButtonTheme: FilledButtonThemeData(
-          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-        ),
-      ),
+      theme: NteTheme.light(),
       home: !onboardingSession.sessionRestoreComplete
           ? Scaffold(body: SafeArea(child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
               const CircularProgressIndicator(), const SizedBox(height: 12), Text(localeController.text('status.loading')),

@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import type { Request, Response } from 'express';
 import { ApiError, badRequest, forbidden, notFound, unauthorized, unavailable } from '../errors';
-import { Family, GuardianRelationship, LearningContent, LearningTopic, PaymentEntitlement, StudentProfile } from '../models';
+import { Family, GuardianRelationship, LearningBookmark, LearningContent, LearningContentProgress, LearningTopic, PaymentEntitlement, StudentProfile } from '../models';
 import { learningMediaProvider } from '../services/learning-media';
 
 const supportedLanguages = new Set(['en', 'hi', 'ml', 'ta']);
@@ -37,7 +37,7 @@ async function hasEntitlement(parentId: string, content: typeof LearningContent.
   return Boolean(await PaymentEntitlement.findOne({ guardianId: parentId, studentId: student._id, programmeId: content.programmeId, status: 'active', $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }] }).select('_id'));
 }
 
-function contentDto(content: typeof LearningContent.prototype, availableLanguages: string[], entitled: boolean) {
+function contentDto(content: typeof LearningContent.prototype, availableLanguages: string[], entitled: boolean, bookmarked = false) {
   const paid = content.accessRequirement === 'paid';
   return {
     id: content.contentId,
@@ -55,8 +55,9 @@ function contentDto(content: typeof LearningContent.prototype, availableLanguage
     learningObjectives: paid && !entitled ? [] : content.learningObjectives,
     accessRequirement: content.accessRequirement,
     accessStatus: paid ? entitled ? 'available' : 'entitlement_required' : 'available',
-    mediaAvailable: (!paid || entitled) && learningMediaProvider.available && Boolean(content.mediaAssetKey),
+    mediaAvailable: (!paid || entitled) && (content.mediaType === 'reading' ? Boolean(content.readingBody) : learningMediaProvider.available && Boolean(content.mediaAssetKey)),
     thumbnailAvailable: (!paid || entitled) && learningMediaProvider.available && Boolean(content.thumbnailAssetKey),
+    bookmarked,
   };
 }
 
@@ -104,7 +105,7 @@ export async function listContent(req: Request, res: Response): Promise<void> {
   if (!Number.isSafeInteger(offsetValue) || offsetValue < 0 || offsetValue > 100_000) throw badRequest('OFFSET_INVALID', 'Catalogue position is invalid.');
 
   const [content, availableContentLanguages, programmeFacetDocs] = await Promise.all([
-    LearningContent.find(query).select('+mediaAssetKey +thumbnailAssetKey').sort({ title: 1 }).skip(offsetValue).limit(81),
+    LearningContent.find(query).select('+mediaAssetKey +thumbnailAssetKey +readingBody').sort({ title: 1 }).skip(offsetValue).limit(81),
     LearningContent.distinct('contentLanguage', { publicationStatus: 'published' }),
     LearningContent.aggregate([
       { $match: { publicationStatus: 'published', programmeId: { $exists: true, $ne: '' } } },
@@ -150,7 +151,7 @@ export async function getContent(req: Request, res: Response): Promise<void> {
   const current = auth(req);
   const student = await authorizeStudent(current.parentId, req.query.studentProfileId);
   const content = await LearningContent.findOne({ contentId: req.params.contentId, publicationStatus: 'published' })
-    .select('+mediaAssetKey +thumbnailAssetKey');
+    .select('+mediaAssetKey +thumbnailAssetKey +readingBody');
   if (!content) throw notFound();
   enforceAgeBand(content, student);
   const entitled = await hasEntitlement(current.parentId, content, student);
@@ -158,9 +159,17 @@ export async function getContent(req: Request, res: Response): Promise<void> {
     LearningTopic.find({ topicId: { $in: content.topicIds }, publicationStatus: 'published' }).select('topicId labels'),
     LearningContent.distinct('contentLanguage', { contentGroupId: content.contentGroupId, publicationStatus: 'published' }),
   ]);
+  if (content.mediaType === 'reading' && entitled) {
+    await LearningContentProgress.findOneAndUpdate({ contentId: content.contentId, accountId: current.parentId, studentId: student?._id ?? { $exists: false } }, {
+      $setOnInsert: { status: 'in_progress', ...(student ? { familyId: student.familyId, studentId: student._id } : {}), accountId: current.parentId, contentId: content.contentId },
+      $set: { lastOpenedAt: new Date() },
+    }, { upsert: true, new: true, runValidators: true });
+  }
+  const bookmarked = entitled && Boolean(await LearningBookmark.exists({ contentId: content.contentId, ...learnerFilter(current.parentId, student) }));
   res.json({
     content: {
-      ...contentDto(content, languageVariants.sort(), entitled),
+      ...contentDto(content, languageVariants.sort(), entitled, bookmarked),
+      ...(content.mediaType === 'reading' && entitled ? { readingBody: content.readingBody ?? '' } : {}),
       topics: topicDocs.map((topic) => ({ id: topic.topicId, labels: topic.labels })),
     },
   });
@@ -179,6 +188,7 @@ export async function createMediaAccess(req: Request, res: Response): Promise<vo
   const content = await publishedContent(req.params.contentId);
   enforceAgeBand(content, student);
   if (!(await hasEntitlement(current.parentId, content, student))) throw unavailable('ENTITLEMENT_UNAVAILABLE', 'Paid access cannot be verified without an active server-issued entitlement.');
+  if (content.mediaType === 'reading') throw badRequest('MEDIA_TYPE_NOT_PLAYABLE', 'Reading material does not use media playback.');
   if (!content.mediaAssetKey) throw unavailable('MEDIA_UNAVAILABLE', 'No media asset is configured for this published item.');
   const grant = await learningMediaProvider.createPlaybackGrant(content.mediaAssetKey, content.contentId, current.parentId);
   res.json({ url: grant.url, expiresAt: grant.expiresAt, mediaType: content.mediaType, durationSeconds: content.durationSeconds ?? null });
@@ -194,3 +204,21 @@ export async function createThumbnailAccess(req: Request, res: Response): Promis
   const grant = await learningMediaProvider.createThumbnailGrant(content.thumbnailAssetKey, content.contentId, current.parentId);
   res.json({ url: grant.url, expiresAt: grant.expiresAt });
 }
+
+function learnerFilter(accountId: string, student: Awaited<ReturnType<typeof authorizeStudent>>) {
+  return { accountId, studentId: student?._id ?? { $exists: false } };
+}
+
+export async function learningHistory(req: Request, res: Response): Promise<void> {
+  const current=auth(req);const student=await authorizeStudent(current.parentId,req.query.studentProfileId);const rows=await LearningContentProgress.find(learnerFilter(current.parentId,student)).sort({lastOpenedAt:-1}).limit(100).select('contentId status lastOpenedAt completedAt');
+  const contents=rows.length?await LearningContent.find({contentId:{$in:rows.map((r)=>r.contentId)},publicationStatus:'published'}).select('contentId title description contentLanguage mediaType durationSeconds programmeName'):[];const byId=new Map(contents.map((c)=>[c.contentId,c]));
+  res.json({items:rows.flatMap((r)=>{const c=byId.get(r.contentId);return c?[{id:c.contentId,title:c.title,description:c.description,contentLanguage:c.contentLanguage,mediaType:c.mediaType,durationSeconds:c.durationSeconds??null,programmeName:c.programmeName??null,status:r.status,lastOpenedAt:r.lastOpenedAt,completedAt:r.completedAt??null}]:[]})});
+}
+
+export async function learningBookmarks(req: Request,res: Response):Promise<void>{const current=auth(req);const student=await authorizeStudent(current.parentId,req.query.studentProfileId);const rows=await LearningBookmark.find(learnerFilter(current.parentId,student)).sort({bookmarkedAt:-1}).limit(100).select('contentId bookmarkedAt');const contents=rows.length?await LearningContent.find({contentId:{$in:rows.map((r)=>r.contentId)},publicationStatus:'published'}).select('contentId title description contentLanguage mediaType durationSeconds programmeName'):[];const byId=new Map(contents.map((c)=>[c.contentId,c]));res.json({items:rows.flatMap((r)=>{const c=byId.get(r.contentId);return c?[{id:c.contentId,title:c.title,description:c.description,contentLanguage:c.contentLanguage,mediaType:c.mediaType,durationSeconds:c.durationSeconds??null,programmeName:c.programmeName??null,bookmarkedAt:r.bookmarkedAt}]:[]})});}
+
+export async function updateLearningProgress(req: Request,res: Response):Promise<void>{const current=auth(req);const student=await authorizeStudent(current.parentId,req.body?.studentProfileId);const content=await publishedContent(req.params.contentId);enforceAgeBand(content,student);if(!(await hasEntitlement(current.parentId,content,student)))throw forbidden();const status=req.body?.status;if(!['in_progress','completed'].includes(status))throw badRequest('LEARNING_PROGRESS_INVALID','Choose a valid learning progress state.');const now=new Date();const filter=learnerFilter(current.parentId,student);const prior=await LearningContentProgress.findOne({contentId:content.contentId,...filter});const finalStatus=prior?.status==='completed'?'completed':status;const row=await LearningContentProgress.findOneAndUpdate({contentId:content.contentId,...filter},{$set:{status:finalStatus,lastOpenedAt:now,...(finalStatus==='completed'?{completedAt:prior?.completedAt??now}:{})},$setOnInsert:{contentId:content.contentId,accountId:current.parentId,...(student?{familyId:student.familyId,studentId:student._id}:{})}},{upsert:true,new:true,runValidators:true});res.json({status:row?.status,completedAt:row?.completedAt??null});}
+
+export async function addBookmark(req: Request,res: Response):Promise<void>{const current=auth(req);const student=await authorizeStudent(current.parentId,req.body?.studentProfileId);const content=await publishedContent(req.params.contentId);enforceAgeBand(content,student);if(!(await hasEntitlement(current.parentId,content,student)))throw forbidden();const filter={contentId:content.contentId,...learnerFilter(current.parentId,student)};const existing=await LearningBookmark.findOne(filter);if(existing){res.json({bookmarked:true,bookmarkedAt:existing.bookmarkedAt});return;}const bookmark=await LearningBookmark.create({...filter,bookmarkedAt:new Date()});res.status(201).json({bookmarked:true,bookmarkedAt:bookmark.bookmarkedAt});}
+
+export async function removeBookmark(req: Request,res: Response):Promise<void>{const current=auth(req);const student=await authorizeStudent(current.parentId,req.query.studentProfileId);await LearningBookmark.deleteOne({contentId:req.params.contentId,...learnerFilter(current.parentId,student)});res.json({bookmarked:false});}

@@ -4,6 +4,8 @@ import type { HydratedDocument } from 'mongoose';
 export type LanguageCode = 'en' | 'hi' | 'ml' | 'ta';
 export type AgeGroup = 'child' | 'youth';
 export type ContactType = 'email' | 'phone';
+export type MembershipCategory = 'mother' | 'father' | 'guardian';
+export type MembershipStatus = 'pending_verification' | 'active' | 'suspended';
 
 export type ParentDocument = HydratedDocument<{
   _id: unknown;
@@ -12,6 +14,9 @@ export type ParentDocument = HydratedDocument<{
   contactType: ContactType;
   passwordHash: string;
   preferredLanguage: LanguageCode;
+  membershipCategory: MembershipCategory;
+  membershipId?: string;
+  membershipStatus: MembershipStatus;
   verificationStatus: 'pending' | 'verified';
   verifiedAt?: Date;
   accountStatus: 'active' | 'suspended';

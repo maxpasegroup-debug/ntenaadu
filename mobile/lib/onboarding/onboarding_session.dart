@@ -8,6 +8,7 @@ import '../events/event_repository.dart';
 import '../programmes/programme_repository.dart';
 import '../payments/payment_repository.dart';
 import '../admin/admin_repository.dart';
+import '../community/community_repository.dart';
 
 /// Holds temporary onboarding drafts in memory and authenticated server-loaded
 /// family data for the current account session. Drafts are never represented
@@ -21,6 +22,7 @@ class OnboardingSession extends ChangeNotifier {
     this.programmeRepository = const UnconfiguredProgrammeRepository(),
     this.paymentRepository = const UnconfiguredPaymentRepository(),
     this.adminRepository,
+    this.communityRepository,
     this.consentPolicy,
   }) : _consentPolicy = consentPolicy;
 
@@ -31,6 +33,7 @@ class OnboardingSession extends ChangeNotifier {
   final ProgrammeRepository programmeRepository;
   final PaymentRepository paymentRepository;
   final AdminRepository? adminRepository;
+  final CommunityRepository? communityRepository;
   List<String> _staffRoles = const [];
   List<String> get staffRoles => List.unmodifiable(_staffRoles);
   ConsentPolicyDocument? _consentPolicy;
@@ -42,11 +45,13 @@ class OnboardingSession extends ChangeNotifier {
   final List<StudentProfileDraft> _serverStudents = [];
   ParentAccount? _account;
   bool _familyLoadFailed = false;
+  bool _canManageFamily = false;
   bool _sessionRestoreComplete = false;
 
   GuardianProfileDraft? get guardian => _guardian;
   ParentAccount? get account => _account;
   bool get familyLoadFailed => _familyLoadFailed;
+  bool get canManageFamily => _canManageFamily;
   bool get sessionRestoreComplete => _sessionRestoreComplete;
   ConsentPolicyDocument? get consentPolicy => _consentPolicy;
   bool get policyLoadFailed => _policyLoadFailed;
@@ -82,6 +87,7 @@ class OnboardingSession extends ChangeNotifier {
     } catch (_) {
       _familyLoadFailed = true;
     }
+    await refreshFamilyPermissions();
     notifyListeners();
     return _account!;
   }
@@ -106,7 +112,15 @@ class OnboardingSession extends ChangeNotifier {
         ..addAll(await repository.getStudentProfiles());
       _familyLoadFailed = false;
     } catch (_) { _familyLoadFailed = true; }
+    await refreshFamilyPermissions();
     notifyListeners();
+  }
+
+  Future<void> refreshFamilyPermissions() async {
+    if (_account == null) { _canManageFamily = false; return; }
+    try {
+      _canManageFamily = (await repository.getFamilyGuardians()).any((guardian) => guardian.isOwner);
+    } catch (_) { _canManageFamily = false; }
   }
 
   Future<void> signOut() async {
@@ -116,6 +130,7 @@ class OnboardingSession extends ChangeNotifier {
       _staffRoles = const [];
       _serverStudents.clear();
       _familyLoadFailed = false;
+      _canManageFamily = false;
       _guardian = null;
       _students.clear();
       notifyListeners();
@@ -136,6 +151,9 @@ class OnboardingSession extends ChangeNotifier {
       name: _account!.name,
       contact: _account!.contact,
       preferredLanguage: languageCode,
+      membershipCategory: _account!.membershipCategory,
+      membershipId: _account!.membershipId,
+      membershipStatus: _account!.membershipStatus,
     );
     notifyListeners();
   }

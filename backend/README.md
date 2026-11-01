@@ -52,6 +52,38 @@ production records into this service.
 
 Base path: `/api/v1`
 
+### Membership and connected-family foundation (Phase 2)
+
+Parent accounts now carry a self-selected `membershipCategory` (`mother`,
+`father`, or `guardian`), a unique NTE membership number, and a separate
+membership lifecycle status. The number identifies an NTE membership only; it
+does not verify government identity, age, or legal parent/guardian authority.
+Legacy verified accounts receive a number on their next authenticated account
+read/sign-in. The first-registration and recovery providers remain disabled.
+
+Family connection invitations are created by the account that owns the family.
+The API returns a high-entropy one-time invitation token once for out-of-band
+sharing; no email/SMS provider is configured. Acceptance requires a verified,
+active account whose normalized contact exactly matches the invitation. A
+successful connection is read-only (`view_students`): it exposes only private
+student profiles in the explicitly invited family and creates or restores
+separate guardian relationships. Each connected guardian needs their own
+consent record; the original guardian's consent is never copied. An empty account-owned family record is closed while
+connected and reopened if access is later revoked. Existing student data blocks
+the connection for manual support review rather than being merged. The owner
+can cancel invitations or revoke the connected account. Either party can report
+a connection dispute; the affected shared access is disabled immediately, and
+only a platform administrator can review and resolve the case. Changes are
+audited.
+
+This is a conservative technical default, not a legal custody or authority
+determination. The read-only access, invitation-sharing method, family-dispute
+handling, guardian permissions, membership eligibility, and verification model
+require founder and qualified legal/safeguarding approval before activation.
+The dispute queue uses the existing adult-verified `platform_admin` role, which
+has no self-service provisioning route; the queue cannot be operated until an
+authorized administrator and incident process are in place.
+
 | Method | Path | Access | Purpose |
 |---|---|---|---|
 | POST | `/auth/parents/registrations` | Public, rate limited | Parent registration contract; fails closed while verification provider is disabled |
@@ -60,10 +92,20 @@ Base path: `/api/v1`
 | POST | `/auth/sessions/refresh` | Refresh token | Rotate session credentials |
 | DELETE | `/auth/sessions/current` | Bearer access token | Revoke current refresh session |
 | GET | `/auth/me` | Bearer access token | Current parent account and language preference |
+| PATCH | `/auth/me/profile` | Bearer access token | Update display name and self-selected Mother/Father/guardian experience; unsupported contact/photo edits are rejected |
 | PATCH | `/auth/me/language` | Bearer access token | Persist the selected interface language to the parent account |
 | POST | `/auth/recovery-requests` | Public, rate limited | Recovery contract; unavailable until approved provider exists |
 | POST | `/auth/recovery-completions` | Public, rate limited | Recovery completion contract; unavailable until approved provider exists |
-| GET | `/family/students` | Verified guardian | List only the authenticated guardian's family profiles |
+| GET | `/family/students` | Verified family owner or accepted connected guardian | Owners see their family profiles; connected guardians see only consented profiles and only with the `view_students` permission |
+| GET | `/family/guardians` | Family owner or connected guardian | Owner sees connected adult permissions; connected guardian sees only their own link |
+| GET | `/family/guardian-invitations` | Verified account | List pending invitations addressed to the current verified contact and invitations sent by the family owner |
+| POST | `/family/guardian-invitations` | Family owner, rate limited | Create a 48-hour invitation; returns a one-time secret for manual sharing |
+| POST | `/family/guardian-invitations/:invitationId/response` | Exact invited, verified account, rate limited | Accept read-only family connection or reject using the one-time invitation secret |
+| DELETE | `/family/guardian-invitations/:invitationId` | Family owner | Cancel a pending invitation |
+| DELETE | `/family/guardians/:guardianId` | Family owner | Revoke a connected guardian's family access and audit the action |
+| POST | `/family/guardians/:guardianId/disputes` | Family owner or connected guardian, rate limited | Open an access dispute; disable the affected connected account immediately |
+| GET | `/admin/family-access-disputes` | Platform administrator | Review open family-access disputes; queue reads are audited |
+| POST | `/admin/family-access-disputes/:disputeId/resolution` | Platform administrator | Keep access restricted or restore view-only access with a recorded reason |
 | GET | `/family/audit` | Verified guardian | Read the last 100 non-sensitive family audit events |
 | POST | `/family/students` | Verified guardian | Create a private student profile and pending-consent relationship |
 | PATCH | `/family/students/:studentId` | Owning verified guardian | Update preferred name, broad age group, or preferred language |
@@ -181,3 +223,30 @@ configured verification workflow establishes the state. Event-specific consent l
 waitlist policy, attendance correction rules, cancellation terms, and any
 required provider configuration need founder and qualified-advisor review before
 activation.
+# Phase 3 community API
+
+The community service adds configurable `national → state → district → local` nodes (no state is hard-coded), an audience field (`all`, `families`, `mothers`, `fathers`, `students`), adult/student membership records, guardian approval for student requests, scoped appointments, community announcements, member introductions, participation records and community audit events. Clubs can optionally be attached to a community; their existing club/event authorization and attendance workflows remain the source of truth for club activity.
+
+Signed-in members use `/api/v1/communities` discovery, `/mine`, membership request/guardian decision, announcements, introductions and participation routes. Platform administration uses `/api/v1/admin/communities`, `/community-memberships`, appointment and community-audit routes. Community creation and role assignment require the existing verified `platform_admin` role; scoped leader/moderator operations are checked against active appointments at the community or ancestor scope. Student participation and announcements require an owned active student profile and a granted guardian relationship. Child membership identity is omitted from administrative membership listings.
+
+Adult introductions are fail-closed until an account has both configured adult verification and an explicit networking opt-in. The service does not provide a member directory, contact exchange or direct messaging. Adult category labels remain self-selected in the current identity model and should not be treated as verified parenthood.
+
+No database migration or index build was run as part of this source implementation. The new Mongoose models are included in `allNteModels` for the existing startup index lifecycle; this requires a transaction-capable NTE MongoDB deployment where existing event transactions are used. Community governance policy, identity verification, moderation/retention rules and production approval remain external prerequisites.
+# Phase 3 community API
+
+The community service adds configurable `national → state → district → local` nodes (no state is hard-coded), an audience field (`all`, `families`, `mothers`, `fathers`, `students`), adult/student membership records, guardian approval for student requests, scoped appointments, community announcements, member introductions, participation records and community audit events. Clubs can optionally be attached to a community; their existing club/event authorization and attendance workflows remain the source of truth for club activity.
+
+Signed-in members use `/api/v1/communities` discovery, `/mine`, membership request/guardian decision, announcements, introductions and participation routes. Platform administration uses `/api/v1/admin/communities`, `/community-memberships`, appointment and community-audit routes. Community creation and role assignment require the existing verified `platform_admin` role; scoped leader/moderator operations are checked against active appointments at the community or ancestor scope. Student participation and announcements require an owned active student profile and a granted guardian relationship. Child membership identity is omitted from administrative membership listings.
+
+Adult introductions are fail-closed until an account has both configured adult verification and an explicit networking opt-in. The service does not provide a member directory, contact exchange or direct messaging. Adult category labels remain self-selected in the current identity model and should not be treated as verified parenthood.
+
+No database migration or index build was run as part of this source implementation. The new Mongoose models are included in `allNteModels` for the existing startup index lifecycle; this requires a transaction-capable NTE MongoDB deployment where existing event transactions are used. Community governance policy, identity verification, moderation/retention rules and production approval remain external prerequisites.
+# Phase 4 learning and ALTT additions
+
+The learning service now supports reviewed text reading items alongside provider-backed audio/video, authenticated learning history and bookmarks, and activity progress. New API routes are `GET /api/v1/learning/me/history`, `GET /api/v1/learning/me/bookmarks`, `PUT /api/v1/learning/content/:contentId/progress`, and bookmark create/delete routes. A content detail returns reading text only after publication, age-band checks, guardian relationship/consent checks for a selected student, and any required server entitlement check.
+
+Programme activities carry an ALTT stage (`learn`, `practise`, `participate`, `take_action`, `reflect`, `grow`) and activity type. Publishing a programme requires published activities in all six stages. Response activities accept private text submissions up to 4,000 characters. Only an active enrolled learner attached to the authenticated guardian's active, consented family profile can submit. Submissions are immutable attempts; a new response creates another attempt. Content reviewers may review with written feedback through `/api/v1/admin/programme-submissions`; queue access is limited to the `content_reviewer` role and does not return student/family names. Responses and reviewer feedback are private by default in MongoDB and only disclosed to the owning family or authorized reviewer.
+
+Activities marked for review cannot be completed until a reviewer marks the latest response as reviewed. Once all non-growth activities in the age-eligible programme are completed, growth activities receive `system_earned` progress and the enrolment is completed. Non-response activity completion is guardian-account recorded and should not be described as independently verified. This phase does not implement uploaded evidence, event attendance verification, live-session providers, learner-to-mentor messaging, or payment processing. Paid programmes remain disabled. English interface strings are centralized; Hindi, Malayalam and Tamil use the existing English fallback when a translation is absent, and language-specific lesson versions remain separate content records.
+
+The new collections and indexes are declared in the existing model registry. No database migration or index build was run as part of this source change; normal NTE deployment startup/index behavior and staging verification are still required before operational use.

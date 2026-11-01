@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../design_system/nte_design_system.dart';
 import '../localization/language_picker.dart';
 import '../localization/languages.dart';
 import '../localization/locale_controller.dart';
@@ -10,10 +11,10 @@ import 'onboarding_api_repository.dart';
 import 'onboarding_repository.dart';
 import 'onboarding_session.dart';
 
-const _forest = Color(0xFF263A30);
-const _green = Color(0xFF4C8B69);
-const _saffron = Color(0xFFF3A66B);
-const _ivory = Color(0xFFF6F3EC);
+const _forest = NteColors.forest;
+const _green = NteColors.green;
+const _saffron = NteColors.saffron;
+const _ivory = NteColors.ivory;
 
 typedef _Text = String Function(String key);
 
@@ -179,8 +180,8 @@ class StudentEntryScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => OnboardingScaffold(
-    locale: widget.locale,
-    session: widget.session,
+    locale: locale,
+    session: session,
     titleKey: 'welcome.studentPath',
     bodyBuilder: (context) {
       final t = locale.text;
@@ -213,8 +214,8 @@ class ParentEntryScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => OnboardingScaffold(
-    locale: widget.locale,
-    session: widget.session,
+    locale: locale,
+    session: session,
     titleKey: 'parentEntry.title',
     bodyBuilder: (context) {
       final t = locale.text;
@@ -322,10 +323,15 @@ class FamilyProfilesScreen extends StatelessWidget {
       builder: (context, _) {
         final t = locale.text;
         final students = session.students;
+        final canManageFamily = session.account == null || session.canManageFamily;
         return ListView(
           padding: const EdgeInsets.all(20),
           children: [
             _InfoNotice(text: session.account == null ? t('family.draftNotice') : t('family.signedInNotice')),
+            if (session.account != null && !canManageFamily) ...[
+              const SizedBox(height: 10),
+              _InfoNotice(text: t('family.connections.readOnly')),
+            ],
             if (session.familyLoadFailed) ...[
               const SizedBox(height: 10),
               _ErrorNotice(text: t('family.loadFailed')),
@@ -338,23 +344,32 @@ class FamilyProfilesScreen extends StatelessWidget {
               _StudentDraftCard(
                 student: student,
                 locale: locale,
+                canManage: canManageFamily,
                 onEdit: () => _open(context, StudentProfileFormScreen(
                   locale: locale, session: session, existing: student)),
                 onRemove: () => _confirmRemove(context, student, t),
               ),
               const SizedBox(height: 10),
             ],
-            OutlinedButton.icon(
+            if (canManageFamily) OutlinedButton.icon(
               onPressed: () => _open(context, StudentProfileFormScreen(locale: locale, session: session)),
               icon: const Icon(Icons.add),
               label: Text(t('action.addStudent')),
             ),
             const SizedBox(height: 12),
-            OutlinedButton.icon(
+            if (canManageFamily) OutlinedButton.icon(
               onPressed: () => _open(context, ConsentStatusScreen(locale: locale, session: session)),
               icon: const Icon(Icons.verified_user_outlined),
               label: Text(t('action.reviewConsent')),
             ),
+            if (session.account != null) ...[
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () => _open(context, FamilyConnectionsScreen(locale: locale, session: session)),
+                icon: const Icon(Icons.family_restroom),
+                label: Text(t('family.connections.open')),
+              ),
+            ],
             const SizedBox(height: 20),
             if (session.account == null)
               FilledButton(
@@ -386,6 +401,247 @@ class FamilyProfilesScreen extends StatelessWidget {
         );
       }
     }
+  }
+}
+
+class FamilyConnectionsScreen extends StatefulWidget {
+  const FamilyConnectionsScreen({required this.locale, required this.session, super.key});
+  final LocaleController locale;
+  final OnboardingSession session;
+
+  @override
+  State<FamilyConnectionsScreen> createState() => _FamilyConnectionsScreenState();
+}
+
+class _FamilyConnectionsScreenState extends State<FamilyConnectionsScreen> {
+  final _contact = TextEditingController();
+  List<GuardianMember> _guardians = const [];
+  GuardianInvitationInbox? _invitations;
+  CreatedGuardianInvitation? _created;
+  bool _loading = true;
+  bool _busy = false;
+  String? _error;
+  String? _notice;
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  @override
+  void dispose() { _contact.dispose(); super.dispose(); }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final results = await Future.wait([
+        widget.session.repository.getFamilyGuardians(),
+        widget.session.repository.getGuardianInvitations(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _guardians = results[0] as List<GuardianMember>;
+        _invitations = results[1] as GuardianInvitationInbox;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _error = widget.locale.text('family.connections.loadFailed'));
+    } finally { if (mounted) setState(() => _loading = false); }
+  }
+
+  Future<void> _createInvitation() async {
+    final contact = _contact.text.trim();
+    if (contact.isEmpty) { setState(() => _error = widget.locale.text('validation.required')); return; }
+    setState(() { _busy = true; _error = null; _created = null; });
+    try {
+      final created = await widget.session.repository.createGuardianInvitation(contact);
+      if (!mounted) return;
+      _contact.clear();
+      setState(() => _created = created);
+      await _load();
+    } catch (error) {
+      if (mounted) setState(() => _error = _failure(error));
+    } finally { if (mounted) setState(() => _busy = false); }
+  }
+
+  Future<void> _respond(GuardianInvitation invitation, String token, bool accept) async {
+    setState(() { _busy = true; _error = null; });
+    try {
+      await widget.session.repository.respondToGuardianInvitation(
+        invitationId: invitation.id, oneTimeToken: token.trim(), accept: accept,
+      );
+      await _load();
+      await widget.session.refreshServerStudents();
+    } catch (error) {
+      if (mounted) setState(() => _error = _failure(error));
+    } finally { if (mounted) setState(() => _busy = false); }
+  }
+
+  Future<void> _cancel(String invitationId) async {
+    await _run(() => widget.session.repository.cancelGuardianInvitation(invitationId));
+  }
+
+  Future<void> _revoke(String guardianId) async {
+    await _run(() => widget.session.repository.revokeFamilyGuardian(guardianId));
+  }
+
+  Future<void> _confirmRevoke(String guardianId) async {
+    final t = widget.locale.text;
+    final confirmed = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
+      title: Text(t('family.connections.revokeTitle')),
+      content: Text(t('family.connections.revokeBody')),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context, false), child: Text(t('action.cancel'))),
+        FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(t('family.connections.leave'))),
+      ],
+    ));
+    if (confirmed == true) await _revoke(guardianId);
+  }
+
+  Future<void> _reportDispute(String guardianId) async {
+    final reason = TextEditingController();
+    final t = widget.locale.text;
+    final submittedReason = await showDialog<String>(context: context, builder: (context) => AlertDialog(
+      title: Text(t('family.connections.disputeTitle')),
+      content: TextField(controller: reason, minLines: 3, maxLines: 6, maxLength: 2000, decoration: _decoration(t('family.connections.disputeReason'))),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: Text(t('action.cancel'))),
+        FilledButton(onPressed: () => Navigator.pop(context, reason.text.trim()), child: Text(t('family.connections.disputeSubmit'))),
+      ],
+    ));
+    reason.dispose();
+    if (submittedReason == null) return;
+    if (submittedReason.length < 10) { setState(() => _error = t('family.connections.disputeTooShort')); return; }
+    setState(() { _busy = true; _error = null; });
+    try {
+      await widget.session.repository.reportFamilyAccessDispute(guardianId: guardianId, reason: submittedReason);
+      if (mounted) setState(() => _notice = t('family.connections.disputeReported'));
+      await _load();
+      await widget.session.refreshServerStudents();
+    } catch (error) {
+      if (mounted) setState(() => _error = _failure(error));
+    } finally { if (mounted) setState(() => _busy = false); }
+  }
+
+  Future<void> _run(Future<void> Function() action) async {
+    setState(() { _busy = true; _error = null; });
+    try { await action(); await _load(); await widget.session.refreshServerStudents(); }
+    catch (error) { if (mounted) setState(() => _error = _failure(error)); }
+    finally { if (mounted) setState(() => _busy = false); }
+  }
+
+  String _failure(Object error) {
+    final code = error is OnboardingServiceException ? error.code : '';
+    final key = switch (code) {
+      'FAMILY_DATA_CONFLICT' || 'FAMILY_RELATIONSHIP_CONFLICT' => 'family.connections.familyDataConflict',
+      'FAMILY_CONNECTION_CONFLICT' || 'FAMILY_LINK_EXISTS' => 'family.connections.connectionConflict',
+      'GUARDIAN_ALREADY_CONNECTED' => 'family.connections.alreadyConnected',
+      _ => 'family.connections.operationFailed',
+    };
+    return widget.locale.text(key);
+  }
+
+  @override
+  Widget build(BuildContext context) => OnboardingScaffold(
+    locale: widget.locale,
+    session: widget.session,
+    titleKey: 'family.connections.title',
+    bodyBuilder: (context) {
+      final t = widget.locale.text;
+      final canInvite = _error == null && (_guardians.isEmpty || _guardians.any((guardian) => guardian.isOwner));
+      return ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Text(t('family.connections.intro')),
+          const SizedBox(height: 12),
+          if (_error != null) _ErrorNotice(text: _error!),
+          if (_notice != null) _InfoNotice(text: _notice!),
+          if (_loading) const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator())),
+          if (!_loading) ...[
+            Text(t('family.connections.guardians'), style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            if (_guardians.isEmpty) _EmptyCard(title: t('family.connections.empty'), body: t('family.connections.intro')),
+            for (final guardian in _guardians)
+              Card(child: ListTile(
+                title: Text(guardian.name),
+                subtitle: Text('${t('membership.${guardian.membershipCategory}')} · ${guardian.isOwner ? t('family.connections.owner') : t('family.connections.viewOnly')}'),
+                trailing: guardian.isOwner ? null : Row(mainAxisSize: MainAxisSize.min, children: [
+                  IconButton(tooltip: t('family.connections.disputeSubmit'), icon: const Icon(Icons.flag_outlined), onPressed: _busy ? null : () => _reportDispute(guardian.id)),
+                  IconButton(tooltip: t('family.connections.leave'), icon: const Icon(Icons.link_off), onPressed: _busy ? null : () => _confirmRevoke(guardian.id)),
+                ]),
+              )),
+            if (canInvite) ...[
+              const SizedBox(height: 18),
+              Text(t('family.connections.invite'), style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              TextFormField(controller: _contact, keyboardType: TextInputType.emailAddress, decoration: _decoration(t('family.connections.contact'))),
+              const SizedBox(height: 8),
+              FilledButton(onPressed: _busy ? null : _createInvitation, child: Text(t('family.connections.send'))),
+              if (_created != null) ...[
+                const SizedBox(height: 10),
+                _InfoNotice(text: t('family.connections.shareWarning')),
+                const SizedBox(height: 6),
+                SelectableText('${t('family.connections.invitationId')}: ${_created!.invitation.id}\n${t('family.connections.invitationToken')}: ${_created!.oneTimeToken}'),
+              ],
+            ],
+            const SizedBox(height: 18),
+            Text(t('family.connections.incoming'), style: Theme.of(context).textTheme.titleMedium),
+            for (final invitation in _invitations?.incoming ?? const <GuardianInvitation>[])
+              _IncomingGuardianInvitationCard(
+                invitation: invitation, busy: _busy, locale: widget.locale,
+                onRespond: (token, accept) => _respond(invitation, token, accept),
+              ),
+            if ((_invitations?.incoming ?? const []).isEmpty) Text(t('family.connections.none')),
+            if (canInvite) ...[
+              const SizedBox(height: 18),
+              Text(t('family.connections.outgoing'), style: Theme.of(context).textTheme.titleMedium),
+              for (final invitation in _invitations?.outgoing ?? const <GuardianInvitation>[])
+                Card(child: ListTile(
+                  title: Text(invitation.inviteeContact ?? ''),
+                  subtitle: Text(t('family.connections.status.${invitation.status}')),
+                  trailing: invitation.status == 'pending' ? IconButton(
+                    tooltip: t('family.connections.cancel'), icon: const Icon(Icons.cancel_outlined), onPressed: _busy ? null : () => _cancel(invitation.id),
+                  ) : null,
+                )),
+              if ((_invitations?.outgoing ?? const []).isEmpty) Text(t('family.connections.none')),
+            ],
+          ],
+        ],
+      );
+    },
+  );
+}
+
+class _IncomingGuardianInvitationCard extends StatefulWidget {
+  const _IncomingGuardianInvitationCard({required this.invitation, required this.busy, required this.locale, required this.onRespond});
+  final GuardianInvitation invitation;
+  final bool busy;
+  final LocaleController locale;
+  final Future<void> Function(String token, bool accept) onRespond;
+
+  @override
+  State<_IncomingGuardianInvitationCard> createState() => _IncomingGuardianInvitationCardState();
+}
+
+class _IncomingGuardianInvitationCardState extends State<_IncomingGuardianInvitationCard> {
+  final _token = TextEditingController();
+  @override
+  void dispose() { _token.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.locale.text;
+    return Card(child: Padding(
+      padding: const EdgeInsets.all(14),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Text(t('family.connections.inviter', {'name': widget.invitation.inviterName ?? ''})),
+        const SizedBox(height: 8),
+        TextFormField(controller: _token, onChanged: (_) => setState(() {}), decoration: _decoration(t('family.connections.tokenField'))),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(child: OutlinedButton(onPressed: widget.busy || _token.text.trim().isEmpty ? null : () => widget.onRespond(_token.text, false), child: Text(t('family.connections.reject')))),
+          const SizedBox(width: 8),
+          Expanded(child: FilledButton(onPressed: widget.busy || _token.text.trim().isEmpty ? null : () => widget.onRespond(_token.text, true), child: Text(t('family.connections.accept')))),
+        ]),
+      ]),
+    ));
   }
 }
 
@@ -654,6 +910,7 @@ class _CompleteRegistrationScreenState extends State<CompleteRegistrationScreen>
   final _confirm = TextEditingController();
   String? _error;
   bool _busy = false;
+  String _membershipCategory = 'guardian';
 
   @override
   void dispose() {
@@ -676,6 +933,19 @@ class _CompleteRegistrationScreenState extends State<CompleteRegistrationScreen>
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Text(t('credentials.body')),
             const SizedBox(height: 20),
+            DropdownButtonFormField<String>(
+              value: _membershipCategory,
+              decoration: _decoration(t('membership.category')),
+              items: [
+                DropdownMenuItem(value: 'mother', child: Text(t('membership.mother'))),
+                DropdownMenuItem(value: 'father', child: Text(t('membership.father'))),
+                DropdownMenuItem(value: 'guardian', child: Text(t('membership.guardian'))),
+              ],
+              onChanged: _busy ? null : (value) { if (value != null) setState(() => _membershipCategory = value); },
+            ),
+            const SizedBox(height: 6),
+            Text(t('membership.categoryHint'), style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 16),
             TextFormField(
               controller: _password,
               obscureText: true,
@@ -723,6 +993,7 @@ class _CompleteRegistrationScreenState extends State<CompleteRegistrationScreen>
         password: _password.text,
         preferredLanguage: widget.locale.locale.languageCode,
         students: const [],
+        membershipCategory: _membershipCategory,
       ));
       if (mounted && result.verificationPending) {
         _password.clear();
@@ -1046,6 +1317,15 @@ class ProfileSettingsScreen extends StatelessWidget {
       final t = locale.text;
       return ListView(padding: const EdgeInsets.all(24), children: [
         _InfoNotice(text: session.account == null ? t('profile.signedOut') : t('profile.signedIn')),
+        if (session.account != null) ...[
+          const SizedBox(height: 12),
+          Card(child: ListTile(
+            leading: const Icon(Icons.badge_outlined, color: _green),
+            title: Text(t('membership.${session.account!.membershipCategory}')),
+            subtitle: Text('${t('membership.number')}: ${session.account!.membershipId ?? t('membership.numberUnavailable')}\n${t('membership.status')}: ${t('membership.status.${session.account!.membershipStatus}')}\n${t('membership.numberHint')}'),
+            isThreeLine: true,
+          )),
+        ],
         const SizedBox(height: 16),
         Card(color: Colors.white, child: ListTile(
           leading: const Icon(Icons.language, color: _green),
@@ -1084,10 +1364,11 @@ class ProfileSettingsScreen extends StatelessWidget {
 }
 
 class _StudentDraftCard extends StatelessWidget {
-  const _StudentDraftCard({required this.student, required this.locale, required this.onEdit, required this.onRemove});
+  const _StudentDraftCard({required this.student, required this.locale, required this.canManage, required this.onEdit, required this.onRemove});
 
   final StudentProfileDraft student;
   final LocaleController locale;
+  final bool canManage;
   final VoidCallback onEdit;
   final VoidCallback onRemove;
 
@@ -1103,14 +1384,14 @@ class _StudentDraftCard extends StatelessWidget {
             const Icon(Icons.person_outline, color: _green),
             const SizedBox(width: 8),
             Expanded(child: Text(student.preferredName, style: const TextStyle(fontWeight: FontWeight.w700))),
-            PopupMenuButton<String>(
-              tooltip: t('family.manage'),
-              onSelected: (value) => value == 'edit' ? onEdit() : onRemove(),
-              itemBuilder: (_) => [
-                PopupMenuItem(value: 'edit', child: Text(t('action.edit'))),
-                PopupMenuItem(value: 'remove', child: Text(t(student.persisted ? 'action.archive' : 'action.remove'))),
-              ],
-            ),
+            if (canManage) PopupMenuButton<String>(
+                tooltip: t('family.manage'),
+                onSelected: (value) => value == 'edit' ? onEdit() : onRemove(),
+                itemBuilder: (_) => [
+                  PopupMenuItem(value: 'edit', child: Text(t('action.edit'))),
+                  PopupMenuItem(value: 'remove', child: Text(t(student.persisted ? 'action.archive' : 'action.remove'))),
+                ],
+              ),
           ]),
           Text('${t('family.ageGroup')}: ${t(student.ageGroup == StudentAgeGroup.child ? 'age.child' : 'age.youth')}'),
           Text('${t('family.preferredLanguage')}: ${_languageName(student.preferredLanguage)}'),
