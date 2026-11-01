@@ -8,7 +8,7 @@ function auth(req: Request) { if (!req.nteAuth) throw unauthorized(); return req
 function oid(value: unknown) { if (typeof value !== 'string' || !mongoose.isValidObjectId(value)) throw notFound(); return value; }
 function text(value: unknown, field: string, min: number, max: number) { if (typeof value !== 'string' || value.trim().length < min || value.trim().length > max) throw badRequest('COMMUNITY_FIELD_INVALID', `Enter a valid ${field}.`); return value.trim(); }
 function level(value: unknown): 'national'|'state'|'district'|'local' { if (!['national','state','district','local'].includes(String(value))) throw badRequest('COMMUNITY_LEVEL_INVALID','Select a valid community level.'); return value as any; }
-async function audit(req: Request, eventType: string, subjectId?: string, details: Record<string,unknown> = {}) { await appendAudit({ actorId: auth(req).parentId, ...(subjectId ? { subjectId } : {}), eventType, requestId: req.nteRequestId ?? '', details }); }
+async function audit(req: Request, eventType: string, subjectId?: string, details: Record<string, string | number | boolean | null> = {}) { await appendAudit({ actorId: auth(req).parentId, ...(subjectId ? { subjectId } : {}), eventType, requestId: req.nteRequestId ?? '', details }); }
 async function staff(accountId: string) { const a = await ParentAccount.findOne({ _id: accountId, accountStatus: 'active', verificationStatus: 'verified', adultVerificationStatus: 'verified' }).select('+staffRoles +adultVerificationStatus'); return a; }
 async function canLead(accountId: string, communityId: string) {
   const a = await staff(accountId); if(a?.staffRoles?.includes('platform_admin')) return true;
